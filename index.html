@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>위클리 — 주간 시간표 공유 & 예약</title>
+  <meta name="description" content="구글 로그인으로 나의 월~일 주간 시간 분배를 작성하고 공유하세요. 다른 사람은 원하는 시간을 골라 마크를 남기고 예약할 수 있습니다." />
+  <link rel="preconnect" href="https://www.gstatic.com" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗓️</text></svg>" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- 상단 헤더 -->
+  <header class="app-header">
+    <a href="#/" class="brand">
+      <span class="brand-logo">🗓️</span>
+      <span class="brand-name">위클리</span>
+    </a>
+    <nav class="nav" id="nav">
+      <a href="#/" class="nav-link" data-route="home">둘러보기</a>
+      <a href="#/me" class="nav-link" data-route="me" data-auth-only>내 시간표</a>
+    </nav>
+    <div class="auth-area" id="authArea">
+      <!-- 로그인 상태에 따라 JS가 채웁니다 -->
+    </div>
+  </header>
+
+  <!-- 설정 미완료 안내 배너 -->
+  <div id="configBanner" class="config-banner" hidden>
+    ⚠️ <strong>Firebase 설정이 필요합니다.</strong>
+    <code>firebase-config.js</code> 에 본인의 Firebase 값을 입력하세요. 자세한 방법은 <code>README.md</code> 참고.
+  </div>
+
+  <!-- 메인 뷰 영역 (라우터가 렌더링) -->
+  <main id="view" class="view"></main>
+
+  <!-- 모달 컨테이너 -->
+  <div id="modalRoot"></div>
+
+  <!-- 토스트 -->
+  <div id="toast" class="toast" hidden></div>
+
+  <footer class="app-footer">
+    <span>위클리 · 주간 시간 분배 공유 & 예약</span>
+  </footer>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

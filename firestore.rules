@@ -1,0 +1,39 @@
+rules_version = '2';
+
+// 위클리 — Firestore 보안 규칙
+// Firebase 콘솔 → Firestore Database → 규칙(Rules) 탭에 그대로 붙여넣고 "게시"하세요.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 시간표 문서: schedules/{uid}
+    match /schedules/{uid} {
+      // 누구나 시간표를 볼 수 있음 (공개 둘러보기)
+      allow read: if true;
+
+      // 시간표 생성/수정/삭제는 본인만 가능
+      allow create, update, delete: if request.auth != null
+                                    && request.auth.uid == uid;
+
+      // 예약: schedules/{uid}/reservations/{resId}
+      match /reservations/{resId} {
+        // 예약 현황은 누구나 조회 가능
+        allow read: if true;
+
+        // 로그인한 사용자만, 본인 명의로만 예약 생성 가능
+        allow create: if request.auth != null
+                      && request.resource.data.byUid == request.auth.uid
+                      && request.resource.data.day is int
+                      && request.resource.data.hour is int;
+
+        // 예약을 남긴 본인, 또는 시간표 주인이 삭제 가능
+        allow delete: if request.auth != null
+                      && (request.auth.uid == resource.data.byUid
+                          || request.auth.uid == uid);
+
+        // 수정은 예약 작성자 본인만
+        allow update: if request.auth != null
+                      && resource.data.byUid == request.auth.uid;
+      }
+    }
+  }
+}
