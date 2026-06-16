@@ -149,7 +149,12 @@ a { color: inherit; text-decoration: none; }
 .schedule-head .owner { display: flex; align-items: center; gap: 12px; }
 .schedule-head h2 { margin: 0; font-size: 22px; }
 .schedule-head .bio { color: var(--muted); font-size: 14px; margin-top: 2px; }
-.schedule-actions { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+.schedule-actions { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.vis-badge {
+  font-size: 12px; font-weight: 700; color: var(--muted);
+  background: var(--bg-soft); border: 1px solid var(--border);
+  padding: 6px 10px; border-radius: 999px;
+}
 
 .mode-hint {
   font-size: 13px; color: var(--muted); margin-bottom: 12px;
@@ -184,6 +189,11 @@ a { color: inherit; text-decoration: none; }
 .cell:hover { background: var(--panel-2); }
 .cell.has-plan { background: rgba(108, 123, 255, 0.14); }
 .cell.has-plan:hover { background: rgba(108, 123, 255, 0.22); }
+.cell.reserved::after {
+  content: ""; position: absolute; top: 4px; right: 4px;
+  width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
+}
+.res-dot.mine { border-color: var(--accent); background: rgba(54, 211, 153, 0.18); }
 .plan-title { font-size: 12px; font-weight: 700; line-height: 1.25; word-break: break-word; }
 .plan-desc { font-size: 11px; color: var(--muted); line-height: 1.2; margin-top: 2px;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }

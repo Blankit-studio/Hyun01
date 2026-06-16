@@ -7,8 +7,8 @@ import {
   getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged,
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 import {
-  getFirestore, doc, getDoc, setDoc, collection, getDocs, onSnapshot,
-  addDoc, deleteDoc, serverTimestamp, query, orderBy,
+  getFirestore, doc, getDoc, setDoc, deleteDoc, collection, getDocs,
+  onSnapshot, serverTimestamp, query, where,
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
 // ── 상수 ───────────────────────────────────────────────────────
@@ -18,13 +18,23 @@ const END_HOUR = 24;    // 표시 끝 시각 (미포함)
 const HOURS = Array.from({ length: END_HOUR - START_HOUR }, (_, i) => START_HOUR + i);
 const MARKS = ["📌", "✅", "⭐", "❤️", "🔥", "☕", "🎯", "💬"];
 
+const VISIBILITY = {
+  public:   { label: "공개", desc: "둘러보기 목록에 노출 · 누구나 열람" },
+  unlisted: { label: "링크 공개", desc: "목록에 안 보임 · 링크 아는 사람만 열람" },
+  private:  { label: "비공개", desc: "나만 볼 수 있음" },
+};
+
 const cellKey = (d, h) => `d${d}_h${h}`;
 const hh = (h) => String(h).padStart(2, "0") + ":00";
+const memoId = (uid, slotId) => `${uid}__${slotId}`;
 
 // ── 전역 상태 ──────────────────────────────────────────────────
 let app, auth, db;
 let currentUser = null;
-let unsubReservations = null; // 현재 보고 있는 시간표의 예약 실시간 구독 해제 함수
+let unsubSchedule = null;     // 현재 시간표 문서 구독 해제
+let unsubReservations = null; // 현재 예약 구독 해제
+let gridState = null;         // { uid, isOwner, scheduleData, resByCell }
+let modalOnRes = null;        // 예약 모달이 열려 있을 때 예약 변경 시 호출
 
 // ── DOM 헬퍼 ───────────────────────────────────────────────────
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -51,10 +61,6 @@ function toast(msg, isError = false) {
   t.hidden = false;
   clearTimeout(toast._t);
   toast._t = setTimeout(() => (t.hidden = true), 2800);
-}
-
-function escapeHtml(s = "") {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
 // ── 초기화 ─────────────────────────────────────────────────────
@@ -85,20 +91,20 @@ function boot() {
   route();
 }
 
-// 로그인 시 본인 프로필을 schedules/{uid} 에 병합 저장 (둘러보기 목록에 노출)
+// 로그인 시 본인 프로필을 schedules/{uid} 에 병합 저장
 async function upsertProfile(user) {
   try {
     const ref = doc(db, "schedules", user.uid);
-    await setDoc(
-      ref,
-      {
-        ownerName: user.displayName || "이름없음",
-        ownerPhoto: user.photoURL || "",
-        ownerEmail: user.email || "",
-        updatedAt: serverTimestamp(),
-      },
-      { merge: true }
-    );
+    const snap = await getDoc(ref);
+    const data = snap.exists() ? snap.data() : {};
+    const patch = {
+      ownerName: user.displayName || "이름없음",
+      ownerPhoto: user.photoURL || "",
+      ownerEmail: user.email || "",
+      updatedAt: serverTimestamp(),
+    };
+    if (!data.visibility) patch.visibility = "public"; // 기본 공개
+    await setDoc(ref, patch, { merge: true });
   } catch (e) {
     console.warn("프로필 저장 실패", e);
   }
@@ -140,12 +146,18 @@ async function doLogout() {
 }
 
 // ── 라우터 ─────────────────────────────────────────────────────
-function route() {
+function teardownSubs() {
+  if (unsubSchedule) { unsubSchedule(); unsubSchedule = null; }
   if (unsubReservations) { unsubReservations(); unsubReservations = null; }
+  gridState = null;
+  modalOnRes = null;
+}
+
+function route() {
+  teardownSubs();
   const hash = location.hash || "#/";
   const view = $("#view");
   view.innerHTML = "";
-
   document.querySelectorAll(".nav-link").forEach((n) => n.classList.remove("active"));
 
   if (hash === "#/" || hash === "") {
@@ -188,33 +200,37 @@ async function renderHome(view) {
   view.appendChild(sec);
 
   try {
-    const snap = await getDocs(query(collection(db, "schedules"), orderBy("updatedAt", "desc")));
-    cards.innerHTML = "";
-    let n = 0;
+    // 공개(public)로 설정된 시간표만 조회 → 보안 규칙의 list 조건과 일치
+    const snap = await getDocs(query(collection(db, "schedules"), where("visibility", "==", "public")));
+    const docs = [];
     snap.forEach((d) => {
       const data = d.data();
-      if (!data.ownerName) return;
-      n++;
+      if (data.ownerName) docs.push({ id: d.id, ...data });
+    });
+    docs.sort((a, b) => (b.updatedAt?.seconds || 0) - (a.updatedAt?.seconds || 0));
+
+    cards.innerHTML = "";
+    docs.forEach((data) => {
       const planCount = data.cells ? Object.values(data.cells).filter((c) => c && (c.title || c.desc)).length : 0;
       cards.appendChild(
-        el("div", { class: "card", onclick: () => (location.hash = "#/u/" + encodeURIComponent(d.id)) }, [
+        el("div", { class: "card", onclick: () => (location.hash = "#/u/" + encodeURIComponent(data.id)) }, [
           el("div", { class: "card-head" }, [
             el("img", { class: "avatar", src: data.ownerPhoto || fallbackAvatar(data.ownerName), alt: "" }),
             el("div", {}, [
               el("div", { class: "card-name", text: data.ownerName }),
-              el("div", { class: "card-sub", text: d.id === currentUser?.uid ? "내 시간표" : "시간표 보기" }),
+              el("div", { class: "card-sub", text: data.id === currentUser?.uid ? "내 시간표" : "시간표 보기" }),
             ]),
           ]),
           el("div", { class: "card-meta" }, [el("span", { html: `채워진 시간 <b>${planCount}</b>칸` })]),
         ])
       );
     });
-    $("#homeCount").textContent = `${n}명`;
-    if (n === 0) cards.appendChild(el("div", { class: "empty", text: "아직 공개된 시간표가 없습니다. 첫 번째로 작성해 보세요!" }));
+    $("#homeCount").textContent = `${docs.length}명`;
+    if (docs.length === 0) cards.appendChild(el("div", { class: "empty", text: "아직 공개된 시간표가 없습니다. 첫 번째로 작성해 보세요!" }));
   } catch (e) {
     console.error(e);
     cards.innerHTML = "";
-    cards.appendChild(el("div", { class: "empty", text: "목록을 불러오지 못했습니다. Firestore 보안 규칙과 색인을 확인하세요." }));
+    cards.appendChild(el("div", { class: "empty", text: "목록을 불러오지 못했습니다. Firestore 보안 규칙을 확인하세요." }));
   }
 }
 
@@ -227,128 +243,147 @@ function renderLoginPrompt(view, msg) {
   );
 }
 
-// ── 시간표 화면 ────────────────────────────────────────────────
-async function renderSchedule(view, uid) {
+// ── 시간표 화면 (실시간) ───────────────────────────────────────
+function renderSchedule(view, uid) {
   const isOwner = currentUser && currentUser.uid === uid;
+  view.innerHTML = "";
   const wrap = el("div");
   view.appendChild(wrap);
-  wrap.appendChild(el("div", { class: "empty", text: "시간표를 불러오는 중…" }));
 
-  let scheduleData = {};
-  try {
-    const snap = await getDoc(doc(db, "schedules", uid));
-    if (!snap.exists() && !isOwner) {
-      wrap.innerHTML = "";
-      wrap.appendChild(el("div", { class: "empty", text: "존재하지 않는 시간표입니다." }));
-      return;
+  const headBox = el("div");
+  const hintBox = el("div");
+  const gridWrap = el("div", { class: "grid-wrap" });
+  const statusBox = el("div", {}, [el("div", { class: "empty", text: "시간표를 불러오는 중…" })]);
+  wrap.append(headBox, hintBox, gridWrap, statusBox);
+
+  gridState = { uid, isOwner, scheduleData: {}, resByCell: {} };
+
+  function renderHeader() {
+    const data = gridState.scheduleData || {};
+    const ownerName = data.ownerName || (isOwner ? currentUser.displayName : "사용자");
+    const vis = VISIBILITY[data.visibility] || VISIBILITY.public;
+
+    const actions = el("div", { class: "schedule-actions" });
+    if (isOwner) {
+      actions.appendChild(el("span", { class: "vis-badge", text: "공개범위: " + vis.label }));
+      actions.appendChild(el("button", { class: "btn btn-sm", onclick: () => openSettingsModal(uid, data) }, "⚙️ 설정"));
     }
-    scheduleData = snap.exists() ? snap.data() : {};
-  } catch (e) {
-    console.error(e);
-    wrap.innerHTML = "";
-    wrap.appendChild(el("div", { class: "empty", text: "시간표를 불러오지 못했습니다." }));
-    return;
-  }
+    actions.appendChild(el("button", { class: "btn btn-sm btn-ghost", onclick: copyShareLink(uid) }, "🔗 공유 링크"));
 
-  wrap.innerHTML = "";
-
-  // 헤더
-  const ownerName = scheduleData.ownerName || (isOwner ? currentUser.displayName : "사용자");
-  const head = el("div", { class: "schedule-head" }, [
-    el("div", { class: "owner" }, [
-      el("img", { class: "avatar", style: "width:48px;height:48px", src: scheduleData.ownerPhoto || (isOwner ? currentUser.photoURL : "") || fallbackAvatar(ownerName), alt: "" }),
-      el("div", {}, [
-        el("h2", { text: ownerName + (isOwner ? " (나)" : "") + " 의 주간 시간표" }),
-        el("div", { class: "bio", text: scheduleData.bio || (isOwner ? "소개/메모를 추가해 보세요." : "") }),
+    const head = el("div", { class: "schedule-head" }, [
+      el("div", { class: "owner" }, [
+        el("img", { class: "avatar", style: "width:48px;height:48px", src: data.ownerPhoto || (isOwner ? currentUser.photoURL : "") || fallbackAvatar(ownerName), alt: "" }),
+        el("div", {}, [
+          el("h2", { text: ownerName + (isOwner ? " (나)" : "") + " 의 주간 시간표" }),
+          el("div", { class: "bio", text: data.bio || (isOwner ? "소개/메모를 추가해 보세요." : "") }),
+        ]),
       ]),
-    ]),
-  ]);
-  const actions = el("div", { class: "schedule-actions" });
-  if (isOwner) {
-    actions.appendChild(el("button", { class: "btn btn-sm", onclick: () => openBioModal(uid, scheduleData) }, "소개 편집"));
-    actions.appendChild(el("button", { class: "btn btn-sm btn-ghost", onclick: copyShareLink(uid) }, "🔗 공유 링크"));
-  } else if (currentUser) {
-    actions.appendChild(el("button", { class: "btn btn-sm btn-ghost", onclick: copyShareLink(uid) }, "🔗 공유 링크"));
+      actions,
+    ]);
+    headBox.innerHTML = "";
+    headBox.appendChild(head);
+
+    hintBox.innerHTML = "";
+    hintBox.appendChild(
+      el("div", { class: "mode-hint" }, [
+        isOwner
+          ? "✏️ 칸을 클릭하면 그 시간에 할 일을 작성/수정할 수 있어요. 다른 사람이 남긴 예약도 칸에서 확인·관리할 수 있습니다."
+          : currentUser
+          ? "🖱️ 원하는 빈 시간 칸을 클릭해 마크와 메모를 남겨 예약하세요. 한 칸당 한 명만 예약할 수 있습니다."
+          : "👀 둘러보는 중입니다. 예약을 남기려면 우측 상단에서 Google 로그인하세요.",
+      ])
+    );
   }
-  head.appendChild(actions);
-  wrap.appendChild(head);
 
-  // 안내
-  wrap.appendChild(
-    el("div", { class: "mode-hint" }, [
-      isOwner
-        ? "✏️ 칸을 클릭하면 그 시간에 할 일을 작성/수정할 수 있어요. 다른 사람이 남긴 예약도 칸에 표시됩니다."
-        : currentUser
-        ? "🖱️ 원하는 시간 칸을 클릭해 마크와 메모를 남기고 예약하세요. 채워진 칸에서 상대의 일정도 확인할 수 있어요."
-        : "👀 둘러보는 중입니다. 예약을 남기려면 우측 상단에서 Google 로그인하세요.",
-    ])
-  );
+  function renderGrid() {
+    const prevScroll = gridWrap.scrollLeft;
+    const cells = (gridState.scheduleData && gridState.scheduleData.cells) || {};
+    const grid = el("div", { class: "grid" });
+    grid.appendChild(el("div", { class: "corner gh" }));
+    DAYS.forEach((d, i) => grid.appendChild(el("div", { class: "gh" + (i >= 5 ? " weekend" : ""), text: d })));
 
-  // 그리드
-  const grid = el("div", { class: "grid", id: "grid" });
-  grid.appendChild(el("div", { class: "corner gh" }));
-  DAYS.forEach((d, i) => grid.appendChild(el("div", { class: "gh" + (i >= 5 ? " weekend" : ""), text: d })));
-
-  const cells = scheduleData.cells || {};
-  const cellNodes = {}; // key -> {planArea, resRow}
-  HOURS.forEach((h) => {
-    grid.appendChild(el("div", { class: "time", text: hh(h) }));
-    DAYS.forEach((_, d) => {
-      const key = cellKey(d, h);
-      const plan = cells[key];
-      const planArea = el("div", { class: "plan-area" });
-      if (plan && (plan.title || plan.desc)) {
-        if (plan.title) planArea.appendChild(el("div", { class: "plan-title", text: plan.title }));
-        if (plan.desc) planArea.appendChild(el("div", { class: "plan-desc", text: plan.desc }));
-      }
-      const resRow = el("div", { class: "res-row" });
-      const cell = el(
-        "div",
-        {
-          class: "cell" + (plan && (plan.title || plan.desc) ? " has-plan" : ""),
-          onclick: () => onCellClick(uid, isOwner, d, h, cells[key]),
-        },
-        [planArea, resRow]
-      );
-      cellNodes[key] = { resRow };
-      grid.appendChild(cell);
+    HOURS.forEach((h) => {
+      grid.appendChild(el("div", { class: "time", text: hh(h) }));
+      DAYS.forEach((_, d) => {
+        const key = cellKey(d, h);
+        const plan = cells[key];
+        const res = gridState.resByCell[key];
+        const planArea = el("div", { class: "plan-area" });
+        if (plan && (plan.title || plan.desc)) {
+          if (plan.title) planArea.appendChild(el("div", { class: "plan-title", text: plan.title }));
+          if (plan.desc) planArea.appendChild(el("div", { class: "plan-desc", text: plan.desc }));
+        }
+        const resRow = el("div", { class: "res-row" });
+        if (res) {
+          const mine = currentUser && res.byUid === currentUser.uid;
+          resRow.appendChild(
+            el("span", { class: "res-dot" + (mine ? " mine" : ""), title: `${res.byName}${res.note ? ": " + res.note : ""}` }, [
+              res.mark || "📌",
+            ])
+          );
+        }
+        const cell = el(
+          "div",
+          {
+            class: "cell" + (plan && (plan.title || plan.desc) ? " has-plan" : "") + (res ? " reserved" : ""),
+            onclick: () => onCellClick(uid, isOwner, d, h, cells[key]),
+          },
+          [planArea, resRow]
+        );
+        grid.appendChild(cell);
+      });
     });
-  });
 
-  wrap.appendChild(el("div", { class: "grid-wrap" }, grid));
+    gridWrap.innerHTML = "";
+    gridWrap.appendChild(grid);
+    gridWrap.scrollLeft = prevScroll;
+  }
 
-  // 예약 실시간 구독
-  subscribeReservations(uid, cellNodes, isOwner);
-}
-
-// 예약 실시간 표시
-function subscribeReservations(uid, cellNodes, isOwner) {
-  const col = collection(db, "schedules", uid, "reservations");
-  unsubReservations = onSnapshot(
-    col,
+  // 시간표 문서 실시간 구독 → 작성 즉시 반영
+  unsubSchedule = onSnapshot(
+    doc(db, "schedules", uid),
     (snap) => {
-      const byCell = {};
-      snap.forEach((d) => {
-        const r = { id: d.id, ...d.data() };
-        const key = cellKey(r.day, r.hour);
-        (byCell[key] ||= []).push(r);
-      });
-      Object.entries(cellNodes).forEach(([key, node]) => {
-        node.resRow.innerHTML = "";
-        const list = byCell[key] || [];
-        list.slice(0, 4).forEach((r) => {
-          node.resRow.appendChild(el("span", { class: "res-dot", title: `${r.byName}: ${r.note || ""}` }, [r.mark || "📌"]));
-        });
-        if (list.length > 4) node.resRow.appendChild(el("span", { class: "res-dot", text: `+${list.length - 4}` }));
-      });
-      // 현재 열린 예약목록 모달 갱신을 위해 캐시
-      subscribeReservations._cache = { uid, byCell, isOwner };
-      if (typeof subscribeReservations._onUpdate === "function") subscribeReservations._onUpdate();
+      statusBox.innerHTML = "";
+      if (!snap.exists()) {
+        if (isOwner) {
+          gridState.scheduleData = {};
+          renderHeader();
+          renderGrid();
+        } else {
+          wrap.innerHTML = "";
+          wrap.appendChild(el("div", { class: "empty", text: "존재하지 않는 시간표입니다." }));
+        }
+        return;
+      }
+      gridState.scheduleData = snap.data();
+      renderHeader();
+      renderGrid();
     },
     (err) => {
-      console.error("예약 구독 오류", err);
-      toast("예약 정보를 불러오지 못했습니다.", true);
+      console.error("시간표 구독 오류", err);
+      teardownSubs();
+      wrap.innerHTML = "";
+      const msg = err.code === "permission-denied"
+        ? "🔒 비공개 시간표이거나 접근 권한이 없습니다."
+        : "시간표를 불러오지 못했습니다.";
+      wrap.appendChild(el("div", { class: "empty", text: msg }));
     }
+  );
+
+  // 예약 실시간 구독
+  unsubReservations = onSnapshot(
+    collection(db, "schedules", uid, "reservations"),
+    (snap) => {
+      const map = {};
+      snap.forEach((d) => {
+        const r = { id: d.id, ...d.data() };
+        map[cellKey(r.day, r.hour)] = r; // 정원 1명: 슬롯당 1건
+      });
+      gridState.resByCell = map;
+      if (gridState.scheduleData) renderGrid();
+      if (typeof modalOnRes === "function") modalOnRes();
+    },
+    (err) => console.error("예약 구독 오류", err)
   );
 }
 
@@ -358,11 +393,36 @@ function onCellClick(uid, isOwner, day, hour, plan) {
   else openReservationModal(uid, day, hour, plan);
 }
 
-// 소유자: 일정 편집 모달
+// 소유자: 일정 편집 + 예약 확인/삭제
 function openPlanModal(uid, day, hour, plan) {
   const titleInput = el("input", { type: "text", maxlength: "40", value: plan?.title || "", placeholder: "예: 운동, 회의, 공부" });
   const descInput = el("textarea", { maxlength: "200", placeholder: "이 시간에 대한 자세한 설명 (선택)" });
   descInput.value = plan?.desc || "";
+
+  // 이 슬롯의 예약 표시 (있으면)
+  const resBox = el("div");
+  const renderResBox = () => {
+    const res = gridState?.resByCell?.[cellKey(day, hour)];
+    resBox.innerHTML = "";
+    if (!res) return;
+    resBox.appendChild(el("div", { class: "divider" }));
+    resBox.appendChild(
+      el("div", { class: "field" }, [
+        el("label", { text: "이 시간의 예약" }),
+        el("div", { class: "res-item" }, [
+          el("span", { class: "res-mark", text: res.mark || "📌" }),
+          el("img", { class: "avatar avatar-sm", src: res.byPhoto || fallbackAvatar(res.byName), alt: "" }),
+          el("div", { class: "grow" }, [
+            el("div", { class: "who", text: res.byName || "익명" }),
+            res.note ? el("div", { class: "note", text: res.note }) : el("div", { class: "note", text: "(공개 메모 없음)" }),
+          ]),
+          el("button", { class: "btn btn-sm btn-danger", onclick: () => removeReservation(uid, day, hour) }, "예약 삭제"),
+        ]),
+      ])
+    );
+  };
+  renderResBox();
+  modalOnRes = renderResBox;
 
   openModal({
     title: `${DAYS[day]}요일 ${hh(hour)} 일정`,
@@ -370,10 +430,11 @@ function openPlanModal(uid, day, hour, plan) {
     body: [
       el("div", { class: "field" }, [el("label", { text: "제목" }), titleInput]),
       el("div", { class: "field" }, [el("label", { text: "상세 설명" }), descInput]),
+      resBox,
     ],
     actions: [
       plan && (plan.title || plan.desc)
-        ? el("button", { class: "btn btn-danger", onclick: async () => { await savePlan(uid, day, hour, null); closeModal(); toast("삭제했습니다."); } }, "삭제")
+        ? el("button", { class: "btn btn-danger", onclick: async () => { await savePlan(uid, day, hour, null); closeModal(); toast("삭제했습니다."); } }, "일정 삭제")
         : null,
       el("button", { class: "btn btn-ghost", onclick: closeModal }, "취소"),
       el("button", {
@@ -388,6 +449,7 @@ function openPlanModal(uid, day, hour, plan) {
         },
       }, "저장"),
     ],
+    onClose: () => { modalOnRes = null; },
   });
   setTimeout(() => titleInput.focus(), 50);
 }
@@ -400,16 +462,15 @@ async function savePlan(uid, day, hour, value) {
     const cells = (snap.exists() && snap.data().cells) || {};
     if (value) cells[key] = value; else delete cells[key];
     await setDoc(ref, { cells, updatedAt: serverTimestamp() }, { merge: true });
-    // 화면 갱신
-    renderSchedule($("#view"), uid);
+    // onSnapshot 이 즉시 화면을 갱신하므로 별도 재렌더 불필요
   } catch (e) {
     console.error(e);
     toast("저장 실패: " + (e.code || e.message), true);
   }
 }
 
-// 방문자: 예약 모달
-function openReservationModal(uid, day, hour, plan) {
+// 방문자: 예약 모달 (정원 1명 + 공개 메모 + 비공개 메모)
+async function openReservationModal(uid, day, hour, plan) {
   if (!currentUser) {
     openModal({
       title: "로그인이 필요합니다",
@@ -423,10 +484,46 @@ function openReservationModal(uid, day, hour, plan) {
     return;
   }
 
-  let selectedMark = MARKS[0];
+  const slotId = cellKey(day, hour);
+  const existing = gridState?.resByCell?.[slotId];
+  const mine = existing && existing.byUid === currentUser.uid;
+
+  const planInfo = plan && (plan.title || plan.desc)
+    ? el("div", { class: "mode-hint", style: "margin:0" }, [el("b", { text: plan.title || "" }), plan.desc ? " — " + plan.desc : ""])
+    : el("div", { class: "card-sub", text: "상대가 이 시간에 등록한 일정은 없습니다." });
+
+  // 이미 다른 사람이 예약한 경우 → 예약 불가
+  if (existing && !mine) {
+    openModal({
+      title: `${DAYS[day]}요일 ${hh(hour)} 예약`,
+      sub: "이미 예약된 시간입니다. (정원 1명)",
+      body: [
+        planInfo,
+        el("div", { class: "field" }, [
+          el("label", { text: "예약 현황" }),
+          el("div", { class: "res-item" }, [
+            el("span", { class: "res-mark", text: existing.mark || "📌" }),
+            el("img", { class: "avatar avatar-sm", src: existing.byPhoto || fallbackAvatar(existing.byName), alt: "" }),
+            el("div", { class: "grow" }, [
+              el("div", { class: "who", text: existing.byName || "익명" }),
+              existing.note ? el("div", { class: "note", text: existing.note }) : null,
+            ]),
+          ]),
+        ]),
+      ],
+      actions: [el("button", { class: "btn btn-ghost", onclick: closeModal }, "닫기")],
+    });
+    return;
+  }
+
+  // 내 비공개 메모 불러오기 (있으면)
+  let privateText = "";
+  if (mine) privateText = await loadPrivateMemo(uid, slotId);
+
+  let selectedMark = (mine && existing.mark) || MARKS[0];
   const emojiPicker = el("div", { class: "emoji-picker" });
-  MARKS.forEach((m, i) => {
-    const b = el("button", { class: "emoji-opt" + (i === 0 ? " selected" : ""), type: "button", text: m });
+  MARKS.forEach((m) => {
+    const b = el("button", { class: "emoji-opt" + (m === selectedMark ? " selected" : ""), type: "button", text: m });
     b.addEventListener("click", () => {
       selectedMark = m;
       emojiPicker.querySelectorAll(".emoji-opt").forEach((x) => x.classList.remove("selected"));
@@ -434,67 +531,59 @@ function openReservationModal(uid, day, hour, plan) {
     });
     emojiPicker.appendChild(b);
   });
-  const noteInput = el("textarea", { maxlength: "200", placeholder: "예약 메모를 남기세요. 예: 30분 통화 가능할까요?" });
 
-  const planInfo = plan && (plan.title || plan.desc)
-    ? el("div", { class: "mode-hint", style: "margin:0" }, [el("b", { text: plan.title || "" }), plan.desc ? " — " + plan.desc : ""])
-    : el("div", { class: "card-sub", text: "상대가 이 시간에 등록한 일정은 없습니다." });
+  const noteInput = el("textarea", { maxlength: "200", placeholder: "상대에게 보이는 공개 메모. 예: 30분 통화 가능할까요?" });
+  noteInput.value = mine ? (existing.note || "") : "";
+  const privateInput = el("textarea", { maxlength: "200", placeholder: "나만 볼 수 있는 메모. 예: 우리 회사 위치 공유, 준비물 등" });
+  privateInput.value = privateText;
 
-  // 예약 목록 영역 (실시간)
-  const listWrap = el("div", { class: "res-list" });
-  const renderList = () => {
-    const cache = subscribeReservations._cache;
-    const items = (cache?.byCell?.[cellKey(day, hour)]) || [];
-    listWrap.innerHTML = "";
-    if (items.length === 0) { listWrap.appendChild(el("div", { class: "card-sub", text: "아직 예약이 없습니다." })); return; }
-    items
-      .sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0))
-      .forEach((r) => {
-        const canDelete = currentUser && (currentUser.uid === r.byUid || currentUser.uid === uid);
-        listWrap.appendChild(
-          el("div", { class: "res-item" }, [
-            el("span", { class: "res-mark", text: r.mark || "📌" }),
-            el("img", { class: "avatar avatar-sm", src: r.byPhoto || fallbackAvatar(r.byName), alt: "" }),
-            el("div", { class: "grow" }, [
-              el("div", { class: "who", text: r.byName || "익명" }),
-              r.note ? el("div", { class: "note", text: r.note }) : null,
-            ]),
-            canDelete ? el("button", { class: "btn btn-sm btn-danger", onclick: () => removeReservation(uid, r.id) }, "삭제") : null,
-          ])
-        );
-      });
-  };
-  subscribeReservations._onUpdate = renderList;
-  renderList();
+  const actions = [el("button", { class: "btn btn-ghost", onclick: closeModal }, "닫기")];
+  if (mine) {
+    actions.push(el("button", { class: "btn btn-danger", onclick: () => removeReservation(uid, day, hour, true) }, "예약 취소"));
+  }
+  actions.push(
+    el("button", {
+      class: "btn btn-primary",
+      onclick: async () => {
+        const ok = await saveReservation(uid, day, hour, selectedMark, noteInput.value.trim(), privateInput.value.trim());
+        if (ok) { closeModal(); toast(mine ? "예약을 수정했습니다." : "예약을 남겼습니다."); }
+      },
+    }, mine ? "예약 수정" : "예약하기")
+  );
 
   openModal({
     title: `${DAYS[day]}요일 ${hh(hour)} 예약`,
-    sub: "마크를 고르고 메모를 남겨 예약하세요.",
+    sub: mine ? "내 예약을 수정할 수 있어요." : "마크를 고르고 메모를 남겨 예약하세요. (정원 1명)",
     body: [
       planInfo,
       el("div", { class: "field" }, [el("label", { text: "마크 선택" }), emojiPicker]),
-      el("div", { class: "field" }, [el("label", { text: "메모" }), noteInput]),
-      el("div", { class: "divider" }),
-      el("div", { class: "field" }, [el("label", { text: "이 시간의 예약 현황" }), listWrap]),
+      el("div", { class: "field" }, [el("label", { text: "공개 메모 (상대도 볼 수 있어요)" }), noteInput]),
+      el("div", { class: "field" }, [el("label", { text: "🔒 비공개 메모 (나만 보기)" }), privateInput]),
     ],
-    actions: [
-      el("button", { class: "btn btn-ghost", onclick: closeModal }, "닫기"),
-      el("button", {
-        class: "btn btn-primary",
-        onclick: async () => {
-          await addReservation(uid, day, hour, selectedMark, noteInput.value.trim());
-          noteInput.value = "";
-          toast("예약을 남겼습니다.");
-        },
-      }, "예약하기"),
-    ],
-    onClose: () => { subscribeReservations._onUpdate = null; },
+    actions,
   });
+  setTimeout(() => noteInput.focus(), 50);
 }
 
-async function addReservation(uid, day, hour, mark, note) {
+async function loadPrivateMemo(uid, slotId) {
   try {
-    await addDoc(collection(db, "schedules", uid, "reservations"), {
+    const snap = await getDoc(doc(db, "privateMemos", memoId(uid, slotId)));
+    return snap.exists() ? snap.data().text || "" : "";
+  } catch {
+    return ""; // 권한 없음 등
+  }
+}
+
+async function saveReservation(uid, day, hour, mark, note, privateText) {
+  const slotId = cellKey(day, hour);
+  const existing = gridState?.resByCell?.[slotId];
+  if (existing && existing.byUid !== currentUser.uid) {
+    toast("이미 예약된 시간입니다.", true);
+    return false;
+  }
+  try {
+    // 슬롯 단위 고정 ID → 한 칸당 한 건만 존재 (보안 규칙으로 타인 덮어쓰기 차단)
+    await setDoc(doc(db, "schedules", uid, "reservations", slotId), {
       day, hour, mark,
       note: note || "",
       byUid: currentUser.uid,
@@ -502,44 +591,77 @@ async function addReservation(uid, day, hour, mark, note) {
       byPhoto: currentUser.photoURL || "",
       createdAt: serverTimestamp(),
     });
+    // 비공개 메모 저장/삭제
+    const mref = doc(db, "privateMemos", memoId(uid, slotId));
+    if (privateText) {
+      await setDoc(mref, {
+        ownerUid: currentUser.uid, scheduleUid: uid, slotId,
+        text: privateText, updatedAt: serverTimestamp(),
+      });
+    } else {
+      await deleteDoc(mref).catch(() => {});
+    }
+    return true;
   } catch (e) {
     console.error(e);
-    toast("예약 실패: " + (e.code || e.message), true);
+    const msg = e.code === "permission-denied" ? "이미 예약되었거나 권한이 없습니다." : (e.code || e.message);
+    toast("예약 실패: " + msg, true);
+    return false;
   }
 }
 
-async function removeReservation(uid, resId) {
+async function removeReservation(uid, day, hour, closeAfter = false) {
+  const slotId = cellKey(day, hour);
   try {
-    await deleteDoc(doc(db, "schedules", uid, "reservations", resId));
+    await deleteDoc(doc(db, "schedules", uid, "reservations", slotId));
+    await deleteDoc(doc(db, "privateMemos", memoId(uid, slotId))).catch(() => {});
     toast("예약을 취소했습니다.");
+    if (closeAfter) closeModal();
   } catch (e) {
     console.error(e);
     toast("삭제 실패: " + (e.code || e.message), true);
   }
 }
 
-// 소개 편집
-function openBioModal(uid, data) {
-  const input = el("textarea", { maxlength: "160", placeholder: "예: 평일 저녁/주말 오전에 연락 가능합니다." });
-  input.value = data.bio || "";
+// 설정: 소개 + 공개 범위
+function openSettingsModal(uid, data) {
+  const bioInput = el("textarea", { maxlength: "160", placeholder: "예: 평일 저녁/주말 오전에 연락 가능합니다." });
+  bioInput.value = data.bio || "";
+
+  const visSelect = el("select");
+  Object.entries(VISIBILITY).forEach(([key, v]) => {
+    visSelect.appendChild(el("option", { value: key, ...(data.visibility || "public") === key ? { selected: "selected" } : {} }, `${v.label} — ${v.desc}`));
+  });
+
   openModal({
-    title: "소개 / 메모 편집",
-    sub: "시간표 상단에 표시됩니다.",
-    body: [el("div", { class: "field" }, [el("label", { text: "소개" }), input])],
+    title: "시간표 설정",
+    sub: "소개와 공개 범위를 설정하세요.",
+    body: [
+      el("div", { class: "field" }, [el("label", { text: "소개 / 메모" }), bioInput]),
+      el("div", { class: "field" }, [el("label", { text: "공개 범위" }), visSelect]),
+    ],
     actions: [
       el("button", { class: "btn btn-ghost", onclick: closeModal }, "취소"),
       el("button", {
         class: "btn btn-primary",
         onclick: async () => {
-          await setDoc(doc(db, "schedules", uid), { bio: input.value.trim(), updatedAt: serverTimestamp() }, { merge: true });
-          closeModal();
-          renderSchedule($("#view"), uid);
-          toast("저장했습니다.");
+          try {
+            await setDoc(doc(db, "schedules", uid), {
+              bio: bioInput.value.trim(),
+              visibility: visSelect.value,
+              updatedAt: serverTimestamp(),
+            }, { merge: true });
+            closeModal();
+            toast("저장했습니다.");
+          } catch (e) {
+            console.error(e);
+            toast("저장 실패: " + (e.code || e.message), true);
+          }
         },
       }, "저장"),
     ],
   });
-  setTimeout(() => input.focus(), 50);
+  setTimeout(() => bioInput.focus(), 50);
 }
 
 function copyShareLink(uid) {
@@ -574,7 +696,7 @@ function closeModal() {
   const b = $("#modalBackdrop");
   if (b) { if (typeof b._onClose === "function") b._onClose(); b.remove(); }
   document.removeEventListener("keydown", escClose);
-  subscribeReservations._onUpdate = null;
+  modalOnRes = null;
 }
 
 // ── 설정 미완료 시 안내 ────────────────────────────────────────

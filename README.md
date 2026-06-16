@@ -12,8 +12,10 @@
 - **Google 로그인** (Firebase Authentication)
 - **주간 시간표 작성** — 요일 × 시간(06:00~24:00) 격자에서 칸을 클릭해 제목/상세 설명 작성
 - **공개 둘러보기** — 다른 사람들의 시간표를 카드로 탐색
-- **시간 예약** — 방문자가 특정 칸을 선택해 마크(📌✅⭐…) + 메모를 남기고 예약
-- **실시간 반영** — 예약이 Firestore `onSnapshot` 으로 즉시 갱신
+- **시간 예약 (정원 1명)** — 방문자가 특정 칸을 선택해 마크(📌✅⭐…) + 메모를 남기고 예약. 한 칸당 한 명만 예약 가능
+- **공개 / 비공개 메모** — 상대도 보는 공개 메모와, 예약자 본인만 보는 🔒 비공개 메모 분리
+- **공개 범위 설정** — 공개 / 링크 공개 / 비공개 중 선택
+- **실시간 반영** — 시간표 작성·예약이 Firestore `onSnapshot` 으로 즉시 갱신
 - **공유 링크** — 내 시간표 URL을 복사해 공유
 - **권한 관리** — 시간표는 본인만 편집, 예약은 작성자/시간표 주인이 삭제
 
@@ -96,15 +98,26 @@ python3 -m http.server 5173
 ```
 schedules/{uid}
 ├─ ownerName, ownerPhoto, ownerEmail, bio, updatedAt
+├─ visibility: "public" | "unlisted" | "private"   # 공개 범위
 └─ cells: {                       # 시간표 칸
      "d0_h9":  { title, desc },   # d=요일(0=월…6=일), h=시각(24h)
      "d2_h14": { title, desc },
      ...
    }
 
-schedules/{uid}/reservations/{resId}
-   { day, hour, mark, note, byUid, byName, byPhoto, createdAt }
+# 예약: 문서 ID가 "d{요일}_h{시}" 고정값 → 한 칸당 1건(정원 1명)
+schedules/{uid}/reservations/{slotId}
+   { day, hour, mark, note(공개), byUid, byName, byPhoto, createdAt }
+
+# 비공개 메모: 작성자 본인만 읽기/쓰기 가능 (문서 ID = "{uid}__{slotId}")
+privateMemos/{memoId}
+   { ownerUid, scheduleUid, slotId, text, updatedAt }
 ```
+
+### 공개 범위(visibility)
+- **public(공개)** — 둘러보기 목록에 노출되고 누구나 열람
+- **unlisted(링크 공개)** — 목록엔 안 보이지만 링크를 아는 사람은 열람
+- **private(비공개)** — 본인만 열람 가능
 
 ---
 
