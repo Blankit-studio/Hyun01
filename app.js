@@ -7,8 +7,8 @@ import {
   getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged,
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 import {
-  getFirestore, doc, getDoc, setDoc, deleteDoc, collection, getDocs,
-  onSnapshot, serverTimestamp, query, where,
+  getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, deleteField,
+  collection, getDocs, onSnapshot, serverTimestamp, query, where,
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
 // ── 상수 ───────────────────────────────────────────────────────
@@ -456,14 +456,22 @@ function openPlanModal(uid, day, hour, plan) {
 
 async function savePlan(uid, day, hour, value) {
   const ref = doc(db, "schedules", uid);
-  const key = cellKey(day, hour);
+  // 중첩 맵의 특정 키만 갱신/삭제. merge 는 키 삭제를 못하므로 deleteField() 사용.
+  const fieldPath = `cells.${cellKey(day, hour)}`;
   try {
-    const snap = await getDoc(ref);
-    const cells = (snap.exists() && snap.data().cells) || {};
-    if (value) cells[key] = value; else delete cells[key];
-    await setDoc(ref, { cells, updatedAt: serverTimestamp() }, { merge: true });
+    await updateDoc(ref, {
+      [fieldPath]: value ? value : deleteField(),
+      updatedAt: serverTimestamp(),
+    });
     // onSnapshot 이 즉시 화면을 갱신하므로 별도 재렌더 불필요
   } catch (e) {
+    // 문서가 아직 없으면(updateDoc 실패) 생성
+    if (e.code === "not-found" && value) {
+      try {
+        await setDoc(ref, { cells: { [cellKey(day, hour)]: value }, updatedAt: serverTimestamp() }, { merge: true });
+        return;
+      } catch (e2) { e = e2; }
+    }
     console.error(e);
     toast("저장 실패: " + (e.code || e.message), true);
   }
@@ -612,8 +620,10 @@ async function saveReservation(uid, day, hour, mark, note, privateText) {
 
 async function removeReservation(uid, day, hour, closeAfter = false) {
   const slotId = cellKey(day, hour);
+  const res = gridState?.resByCell?.[slotId];
+  const docId = res?.id || slotId; // 구버전(랜덤 ID) 예약도 실제 ID로 삭제
   try {
-    await deleteDoc(doc(db, "schedules", uid, "reservations", slotId));
+    await deleteDoc(doc(db, "schedules", uid, "reservations", docId));
     await deleteDoc(doc(db, "privateMemos", memoId(uid, slotId))).catch(() => {});
     toast("예약을 취소했습니다.");
     if (closeAfter) closeModal();
