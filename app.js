@@ -103,7 +103,7 @@ async function upsertProfile(user) {
       ownerEmail: user.email || "",
       updatedAt: serverTimestamp(),
     };
-    if (!data.visibility) patch.visibility = "public"; // 기본 공개
+    if (!data.visibility) patch.visibility = "unlisted"; // 신규 계정 기본: 링크 공개
     await setDoc(ref, patch, { merge: true });
   } catch (e) {
     console.warn("프로필 저장 실패", e);
