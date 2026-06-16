@@ -10,12 +10,13 @@
 // ─────────────────────────────────────────────────────────────
 
 export const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-  appId: "YOUR_APP_ID",
+  apiKey: "AIzaSyBY0p4sC1eL46FXSEOU8GoIGdd2HaE1jQA",
+  authDomain: "web-schedule-fe24a.firebaseapp.com",
+  projectId: "web-schedule-fe24a",
+  storageBucket: "web-schedule-fe24a.firebasestorage.app",
+  messagingSenderId: "1018230786301",
+  appId: "1:1018230786301:web:834d67daf834ba44599694",
+  measurementId: "G-KWN09JWRWT",
 };
 
 // 위 값이 채워졌는지 간단히 확인하는 플래그 (UI 안내용)
