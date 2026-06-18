@@ -33,8 +33,12 @@ let app, auth, db;
 let currentUser = null;
 let unsubSchedule = null;     // 현재 시간표 문서 구독 해제
 let unsubReservations = null; // 현재 예약 구독 해제
-let gridState = null;         // { uid, isOwner, scheduleData, resByCell }
+let gridState = null;         // { uid, isOwner, scheduleData, resByCell, cellEls }
 let modalOnRes = null;        // 예약 모달이 열려 있을 때 예약 변경 시 호출
+let selCtx = null;            // 드래그 선택 상태
+let justDragged = false;      // 드래그 직후 click 무시 플래그
+let longPressTimer = null;    // 모바일 길게누르기 타이머
+let selectionCleanup = null;  // 드래그 리스너 해제 함수
 
 // ── DOM 헬퍼 ───────────────────────────────────────────────────
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -149,8 +153,10 @@ async function doLogout() {
 function teardownSubs() {
   if (unsubSchedule) { unsubSchedule(); unsubSchedule = null; }
   if (unsubReservations) { unsubReservations(); unsubReservations = null; }
+  if (selectionCleanup) { selectionCleanup(); selectionCleanup = null; }
   gridState = null;
   modalOnRes = null;
+  selCtx = null;
 }
 
 function route() {
@@ -287,9 +293,9 @@ function renderSchedule(view, uid) {
     hintBox.appendChild(
       el("div", { class: "mode-hint" }, [
         isOwner
-          ? "✏️ 칸을 클릭하면 그 시간에 할 일을 작성/수정할 수 있어요. 다른 사람이 남긴 예약도 칸에서 확인·관리할 수 있습니다."
+          ? "✏️ 칸을 클릭하면 일정을 작성/수정할 수 있어요. 여러 칸은 드래그(모바일은 길게 눌러 드래그)로 한 번에 작성할 수 있습니다."
           : currentUser
-          ? "🖱️ 원하는 빈 시간 칸을 클릭해 마크와 메모를 남겨 예약하세요. 한 칸당 한 명만 예약할 수 있습니다."
+          ? "🖱️ 빈 칸을 클릭해 예약하세요. 여러 시간은 드래그(모바일은 길게 눌러 드래그)로 한 번에 예약할 수 있어요. 한 칸당 한 명만 예약됩니다."
           : "👀 둘러보는 중입니다. 예약을 남기려면 우측 상단에서 Google 로그인하세요.",
       ])
     );
@@ -298,6 +304,7 @@ function renderSchedule(view, uid) {
   function renderGrid() {
     const prevScroll = gridWrap.scrollLeft;
     const cells = (gridState.scheduleData && gridState.scheduleData.cells) || {};
+    gridState.cellEls = {};
     const grid = el("div", { class: "grid" });
     grid.appendChild(el("div", { class: "corner gh" }));
     DAYS.forEach((d, i) => grid.appendChild(el("div", { class: "gh" + (i >= 5 ? " weekend" : ""), text: d })));
@@ -326,10 +333,18 @@ function renderSchedule(view, uid) {
           "div",
           {
             class: "cell" + (plan && (plan.title || plan.desc) ? " has-plan" : "") + (res ? " reserved" : ""),
-            onclick: () => onCellClick(uid, isOwner, d, h, cells[key]),
+            "data-day": d, "data-hour": h,
+            onclick: () => {
+              if (justDragged) { justDragged = false; return; }
+              onCellClick(uid, isOwner, d, h, (gridState.scheduleData.cells || {})[key]);
+            },
+            onmousedown: (e) => { if (e.button === 0) { e.preventDefault(); dragStart(d, h); } },
+            onmouseenter: () => { if (selCtx) dragMove(d, h); },
+            ontouchstart: (e) => onCellTouchStart(e, d, h),
           },
           [planArea, resRow]
         );
+        gridState.cellEls[`${d}_${h}`] = cell;
         grid.appendChild(cell);
       });
     });
@@ -385,6 +400,105 @@ function renderSchedule(view, uid) {
     },
     (err) => console.error("예약 구독 오류", err)
   );
+
+  // 여러 칸 드래그 선택 리스너 (문서 레벨)
+  const onUp = () => finishDesktop();
+  const onMove = (e) => onDocTouchMove(e);
+  const onEnd = () => { clearTimeout(longPressTimer); finishTouch(); };
+  document.addEventListener("mouseup", onUp);
+  document.addEventListener("touchmove", onMove, { passive: false });
+  document.addEventListener("touchend", onEnd);
+  document.addEventListener("touchcancel", onEnd);
+  selectionCleanup = () => {
+    document.removeEventListener("mouseup", onUp);
+    document.removeEventListener("touchmove", onMove);
+    document.removeEventListener("touchend", onEnd);
+    document.removeEventListener("touchcancel", onEnd);
+    clearTimeout(longPressTimer);
+    selCtx = null;
+  };
+}
+
+// ── 여러 칸 드래그 선택 ────────────────────────────────────────
+function selRange(a, b) {
+  return { d0: Math.min(a.d, b.d), d1: Math.max(a.d, b.d), h0: Math.min(a.h, b.h), h1: Math.max(a.h, b.h) };
+}
+function selList(r) {
+  const l = [];
+  for (let d = r.d0; d <= r.d1; d++) for (let h = r.h0; h <= r.h1; h++) l.push({ d, h });
+  return l;
+}
+function highlightSel(r) {
+  if (!gridState?.cellEls) return;
+  Object.values(gridState.cellEls).forEach((c) => c.classList.remove("selecting"));
+  if (!r) return;
+  selList(r).forEach(({ d, h }) => gridState.cellEls[`${d}_${h}`]?.classList.add("selecting"));
+}
+function dragStart(d, h) {
+  justDragged = false;
+  selCtx = { start: { d, h }, cur: { d, h }, moved: false, active: false };
+}
+function dragMove(d, h) {
+  if (!selCtx) return;
+  if (d !== selCtx.cur.d || h !== selCtx.cur.h) selCtx.moved = true;
+  selCtx.cur = { d, h };
+  highlightSel(selRange(selCtx.start, selCtx.cur));
+}
+function dragTouchActivate() {
+  if (!selCtx) return;
+  selCtx.active = true;
+  highlightSel(selRange(selCtx.start, selCtx.cur));
+  if (navigator.vibrate) navigator.vibrate(15);
+}
+function onCellTouchStart(e, d, h) {
+  const t = e.touches[0];
+  if (!t) return;
+  dragStart(d, h);
+  selCtx.touchXY = { x: t.clientX, y: t.clientY };
+  clearTimeout(longPressTimer);
+  longPressTimer = setTimeout(dragTouchActivate, 280); // 길게 누르면 선택 시작
+}
+function onDocTouchMove(e) {
+  if (!selCtx) return;
+  const t = e.touches[0];
+  if (!t) return;
+  if (!selCtx.active) {
+    // 활성화 전 많이 움직이면 스크롤로 보고 선택 취소
+    const dx = Math.abs(t.clientX - selCtx.touchXY.x);
+    const dy = Math.abs(t.clientY - selCtx.touchXY.y);
+    if (dx > 10 || dy > 10) { clearTimeout(longPressTimer); selCtx = null; }
+    return;
+  }
+  e.preventDefault(); // 선택 중에는 스크롤 막기
+  const target = document.elementFromPoint(t.clientX, t.clientY);
+  const cellEl = target && target.closest ? target.closest(".cell") : null;
+  if (cellEl && cellEl.dataset.day != null) dragMove(+cellEl.dataset.day, +cellEl.dataset.hour);
+}
+function finishDesktop() {
+  if (!selCtx) return;
+  const { moved, start, cur } = selCtx;
+  selCtx = null;
+  highlightSel(null);
+  if (moved) {
+    const list = selList(selRange(start, cur));
+    justDragged = true;
+    setTimeout(() => (justDragged = false), 400);
+    openBulkModal(gridState.uid, gridState.isOwner, list);
+  }
+}
+function finishTouch() {
+  if (!selCtx || !selCtx.active) { selCtx = null; return; }
+  const list = selList(selRange(selCtx.start, selCtx.cur));
+  selCtx = null;
+  highlightSel(null);
+  justDragged = true;
+  setTimeout(() => (justDragged = false), 400);
+  if (list.length === 1) {
+    const { d, h } = list[0];
+    onCellClick(gridState.uid, gridState.isOwner, d, h, (gridState.scheduleData.cells || {})[cellKey(d, h)]);
+  } else {
+    openBulkModal(gridState.uid, gridState.isOwner, list);
+  }
 }
 
 // ── 칸 클릭 처리 ───────────────────────────────────────────────
@@ -631,6 +745,151 @@ async function removeReservation(uid, day, hour, closeAfter = false) {
     console.error(e);
     toast("삭제 실패: " + (e.code || e.message), true);
   }
+}
+
+// ── 여러 칸 일괄 처리 모달 ─────────────────────────────────────
+function openBulkModal(uid, isOwner, list) {
+  if (isOwner) openBulkPlanModal(uid, list);
+  else openBulkReserveModal(uid, list);
+}
+
+// 소유자: 여러 칸에 같은 일정 일괄 적용/삭제
+function openBulkPlanModal(uid, list) {
+  const titleInput = el("input", { type: "text", maxlength: "40", placeholder: "예: 공부, 근무, 운동" });
+  const descInput = el("textarea", { maxlength: "200", placeholder: "상세 설명 (선택)" });
+  openModal({
+    title: `${list.length}개 시간 일괄 설정`,
+    sub: "선택한 모든 칸에 같은 일정을 적용합니다.",
+    body: [
+      el("div", { class: "field" }, [el("label", { text: "제목" }), titleInput]),
+      el("div", { class: "field" }, [el("label", { text: "상세 설명" }), descInput]),
+    ],
+    actions: [
+      el("button", { class: "btn btn-danger", onclick: async () => { await bulkSavePlan(uid, list, null); closeModal(); toast(`${list.length}칸을 비웠습니다.`); } }, "선택 칸 비우기"),
+      el("button", { class: "btn btn-ghost", onclick: closeModal }, "취소"),
+      el("button", {
+        class: "btn btn-primary",
+        onclick: async () => {
+          const t = titleInput.value.trim();
+          const d = descInput.value.trim();
+          if (!t && !d) { toast("내용을 입력하세요.", true); return; }
+          await bulkSavePlan(uid, list, { title: t, desc: d });
+          closeModal();
+          toast(`${list.length}칸에 적용했습니다.`);
+        },
+      }, "적용"),
+    ],
+  });
+  setTimeout(() => titleInput.focus(), 50);
+}
+
+async function bulkSavePlan(uid, list, value) {
+  const ref = doc(db, "schedules", uid);
+  const patch = { updatedAt: serverTimestamp() };
+  list.forEach(({ d, h }) => { patch[`cells.${cellKey(d, h)}`] = value ? value : deleteField(); });
+  try {
+    await updateDoc(ref, patch);
+  } catch (e) {
+    if (e.code === "not-found" && value) {
+      try {
+        const cells = {};
+        list.forEach(({ d, h }) => (cells[cellKey(d, h)] = value));
+        await setDoc(ref, { cells, updatedAt: serverTimestamp() }, { merge: true });
+        return;
+      } catch (e2) { e = e2; }
+    }
+    console.error(e);
+    toast("저장 실패: " + (e.code || e.message), true);
+  }
+}
+
+// 방문자: 여러 빈 칸을 한 번에 예약
+function openBulkReserveModal(uid, list) {
+  if (!currentUser) {
+    openModal({
+      title: "로그인이 필요합니다",
+      sub: "예약을 남기려면 Google 로그인이 필요해요.",
+      body: [],
+      actions: [
+        el("button", { class: "btn btn-ghost", onclick: closeModal }, "닫기"),
+        el("button", { class: "btn btn-google", onclick: () => { closeModal(); doLogin(); } }, [googleIcon(), "로그인"]),
+      ],
+    });
+    return;
+  }
+
+  // 다른 사람이 이미 예약한 칸은 제외
+  const available = list.filter(({ d, h }) => {
+    const ex = gridState?.resByCell?.[cellKey(d, h)];
+    return !ex || ex.byUid === currentUser.uid;
+  });
+  const blocked = list.length - available.length;
+
+  let selectedMark = MARKS[0];
+  const emojiPicker = el("div", { class: "emoji-picker" });
+  MARKS.forEach((m, i) => {
+    const b = el("button", { class: "emoji-opt" + (i === 0 ? " selected" : ""), type: "button", text: m });
+    b.addEventListener("click", () => {
+      selectedMark = m;
+      emojiPicker.querySelectorAll(".emoji-opt").forEach((x) => x.classList.remove("selected"));
+      b.classList.add("selected");
+    });
+    emojiPicker.appendChild(b);
+  });
+  const noteInput = el("textarea", { maxlength: "200", placeholder: "상대에게 보이는 공개 메모 (모든 칸에 동일 적용)" });
+  const privateInput = el("textarea", { maxlength: "200", placeholder: "나만 볼 수 있는 메모 (모든 칸에 동일 적용)" });
+
+  openModal({
+    title: `${list.length}개 시간 일괄 예약`,
+    sub: blocked ? `${blocked}개는 이미 예약되어 제외됩니다.` : "선택한 모든 칸을 같은 내용으로 예약합니다.",
+    body: [
+      el("div", { class: "field" }, [el("label", { text: "마크 선택" }), emojiPicker]),
+      el("div", { class: "field" }, [el("label", { text: "공개 메모 (상대도 볼 수 있어요)" }), noteInput]),
+      el("div", { class: "field" }, [el("label", { text: "🔒 비공개 메모 (나만 보기)" }), privateInput]),
+    ],
+    actions: [
+      el("button", { class: "btn btn-ghost", onclick: closeModal }, "닫기"),
+      el("button", {
+        class: "btn btn-primary",
+        onclick: async () => {
+          if (available.length === 0) { toast("예약 가능한 칸이 없습니다.", true); return; }
+          const r = await bulkReserve(uid, available, selectedMark, noteInput.value.trim(), privateInput.value.trim());
+          closeModal();
+          toast(`${r.done}개 예약 완료${r.skipped ? ` · ${r.skipped}개 건너뜀` : ""}`);
+        },
+      }, "예약하기"),
+    ],
+  });
+}
+
+async function bulkReserve(uid, list, mark, note, privateText) {
+  let done = 0, skipped = 0;
+  for (const { d, h } of list) {
+    const slotId = cellKey(d, h);
+    const existing = gridState?.resByCell?.[slotId];
+    if (existing && existing.byUid !== currentUser.uid) { skipped++; continue; }
+    try {
+      await setDoc(doc(db, "schedules", uid, "reservations", slotId), {
+        day: d, hour: h, mark,
+        note: note || "",
+        byUid: currentUser.uid,
+        byName: currentUser.displayName || "익명",
+        byPhoto: currentUser.photoURL || "",
+        createdAt: serverTimestamp(),
+      });
+      const mref = doc(db, "privateMemos", memoId(uid, slotId));
+      if (privateText) {
+        await setDoc(mref, { ownerUid: currentUser.uid, scheduleUid: uid, slotId, text: privateText, updatedAt: serverTimestamp() });
+      } else {
+        await deleteDoc(mref).catch(() => {});
+      }
+      done++;
+    } catch (e) {
+      console.error(e);
+      skipped++;
+    }
+  }
+  return { done, skipped };
 }
 
 // 설정: 소개 + 공개 범위
