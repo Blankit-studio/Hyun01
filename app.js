@@ -67,8 +67,29 @@ function toast(msg, isError = false) {
   toast._t = setTimeout(() => (t.hidden = true), 2800);
 }
 
+// ── 테마(다크/라이트) ──────────────────────────────────────────
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  try { localStorage.setItem("theme", theme); } catch {}
+  const btn = $("#themeToggle");
+  if (btn) btn.textContent = theme === "light" ? "🌙" : "☀️"; // 전환될 모드 아이콘
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", theme === "light" ? "#ffffff" : "#000000");
+}
+function initTheme() {
+  let saved = "dark";
+  try { saved = localStorage.getItem("theme") || "dark"; } catch {}
+  applyTheme(saved === "light" ? "light" : "dark");
+  const btn = $("#themeToggle");
+  if (btn) btn.addEventListener("click", () => {
+    const cur = document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
+    applyTheme(cur === "light" ? "dark" : "light");
+  });
+}
+
 // ── 초기화 ─────────────────────────────────────────────────────
 function boot() {
+  initTheme();
   if (!isConfigured) {
     $("#configBanner").hidden = false;
     renderConfigHelp();

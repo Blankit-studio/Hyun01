@@ -15,8 +15,23 @@
   --primary-2: #00abfc;
   --accent: #00abfc;
   --danger: #ffffff;
+  --header-bg: rgba(0, 0, 0, 0.85);
   --radius: 14px;
   --shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+}
+
+/* 라이트 모드 — 흰 배경 · 검정 텍스트 · 파랑 포인트 */
+html[data-theme="light"] {
+  --bg: #ffffff;
+  --bg-soft: rgba(0, 0, 0, 0.04);
+  --panel: rgba(0, 0, 0, 0.05);
+  --panel-2: rgba(0, 0, 0, 0.10);
+  --border: rgba(0, 0, 0, 0.16);
+  --text: #000000;
+  --muted: rgba(0, 0, 0, 0.6);
+  --danger: #000000;
+  --header-bg: rgba(255, 255, 255, 0.85);
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
 }
 
 * { box-sizing: border-box; }
@@ -27,7 +42,7 @@ body {
   margin: 0;
   font-family: "Pretendard", -apple-system, BlinkMacSystemFont, "Segoe UI",
     Roboto, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
-  background: radial-gradient(1200px 600px at 50% -10%, rgba(0, 171, 252, 0.18) 0%, var(--bg) 60%);
+  background: var(--bg);
   color: var(--text);
   display: flex;
   flex-direction: column;
@@ -42,7 +57,7 @@ a { color: inherit; text-decoration: none; }
   align-items: center;
   gap: 18px;
   padding: 12px 20px;
-  background: rgba(0, 0, 0, 0.85);
+  background: var(--header-bg);
   backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--border);
   position: sticky;
@@ -86,9 +101,11 @@ a { color: inherit; text-decoration: none; }
 .btn-sm { padding: 6px 10px; font-size: 13px; }
 .btn-google {
   display: inline-flex; align-items: center; gap: 9px;
-  background: #fff; color: #000; border-color: #fff;
+  background: #fff; color: #000; border-color: var(--border);
 }
 .btn-google:hover { background: var(--blue); color: #000; }
+
+.theme-toggle { margin-left: auto; font-size: 15px; line-height: 1; }
 .btn-google svg { width: 18px; height: 18px; }
 
 .user-chip { display: flex; align-items: center; gap: 9px; }
@@ -102,7 +119,7 @@ a { color: inherit; text-decoration: none; }
 /* ── 배너 / 토스트 ── */
 .config-banner {
   margin: 0; padding: 10px 20px; font-size: 14px;
-  background: rgba(0, 171, 252, 0.12); color: var(--white); border-bottom: 1px solid var(--blue);
+  background: rgba(0, 171, 252, 0.12); color: var(--text); border-bottom: 1px solid var(--blue);
 }
 .config-banner code { background: rgba(0,0,0,0.4); padding: 1px 6px; border-radius: 6px; }
 .toast {
