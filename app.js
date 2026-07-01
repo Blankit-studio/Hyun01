@@ -13,7 +13,7 @@ import {
 
 // ── 상수 ───────────────────────────────────────────────────────
 const DAYS = ["월", "화", "수", "목", "금", "토", "일"];
-const START_HOUR = 6;   // 표시 시작 시각
+const START_HOUR = 0;   // 표시 시작 시각
 const END_HOUR = 24;    // 표시 끝 시각 (미포함)
 const HOURS = Array.from({ length: END_HOUR - START_HOUR }, (_, i) => START_HOUR + i);
 const MARKS = ["📌", "✅", "⭐", "❤️", "🔥", "☕", "🎯", "💬"];
