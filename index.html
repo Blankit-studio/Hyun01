@@ -8,7 +8,7 @@
   <meta name="description" content="구글 로그인으로 나의 월~일 주간 시간 분배를 작성하고 공유하세요. 다른 사람은 원하는 시간을 골라 마크를 남기고 예약할 수 있습니다." />
   <link rel="preconnect" href="https://www.gstatic.com" />
   <link rel="icon" type="image/svg+xml" href="logo.svg?v=4" />
-  <link rel="stylesheet" href="styles.css?v=4" />
+  <link rel="stylesheet" href="styles.css?v=5" />
 </head>
 <body>
   <!-- 상단 헤더 -->
@@ -25,8 +25,8 @@
     <nav class="nav" id="nav">
       <a href="#/" class="nav-link" data-route="home">둘러보기</a>
       <a href="#/me" class="nav-link" data-route="me" data-auth-only>내 시간표</a>
+      <button id="themeToggle" class="btn btn-sm btn-ghost theme-toggle" title="다크/라이트 모드" aria-label="테마 전환">☀️</button>
     </nav>
-    <button id="themeToggle" class="btn btn-sm btn-ghost theme-toggle" title="다크/라이트 모드" aria-label="테마 전환">☀️</button>
     <div class="auth-area" id="authArea">
       <!-- 로그인 상태에 따라 JS가 채웁니다 -->
     </div>

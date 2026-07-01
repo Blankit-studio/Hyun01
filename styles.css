@@ -105,7 +105,7 @@ a { color: inherit; text-decoration: none; }
 }
 .btn-google:hover { background: var(--blue); color: #000; }
 
-.theme-toggle { margin-left: auto; font-size: 15px; line-height: 1; }
+.theme-toggle { font-size: 15px; line-height: 1; }
 .btn-google svg { width: 18px; height: 18px; }
 
 .user-chip { display: flex; align-items: center; gap: 9px; }
