@@ -39,16 +39,31 @@ let selCtx = null;            // 드래그 선택 상태
 let justDragged = false;      // 드래그 직후 click 무시 플래그
 let longPressTimer = null;    // 모바일 길게누르기 타이머
 let selectionCleanup = null;  // 드래그 리스너 해제 함수
-// 위에서부터 접기: 이 시간 이전(새벽 등)은 숨김. 0이면 전체 표시
-let collapseFrom = (() => {
-  try { const v = parseInt(localStorage.getItem("collapseFrom"), 10); return Number.isFinite(v) ? Math.min(Math.max(v, 0), 12) : 0; }
-  catch { return 0; }
-})();
+// 접기 범위: collapseFrom(시작 시간) 이전 · collapseTo(끝 시간) 이후를 숨김
+const readInt = (key, def, lo, hi) => {
+  try { const v = parseInt(localStorage.getItem(key), 10); return Number.isFinite(v) ? Math.min(Math.max(v, lo), hi) : def; }
+  catch { return def; }
+};
+let collapseFrom = readInt("collapseFrom", 0, 0, 23);
+let collapseTo = readInt("collapseTo", 23, 0, 23);
 
-function setCollapseFrom(h) {
-  collapseFrom = Math.min(Math.max(h | 0, 0), 12);
-  try { localStorage.setItem("collapseFrom", String(collapseFrom)); } catch {}
+function applyCollapse() {
+  try {
+    localStorage.setItem("collapseFrom", String(collapseFrom));
+    localStorage.setItem("collapseTo", String(collapseTo));
+  } catch {}
+  gridState?.renderHeader?.();
   gridState?.renderGrid?.();
+}
+function setCollapseFrom(h) {
+  collapseFrom = Math.min(Math.max(h | 0, 0), 23);
+  if (collapseFrom > collapseTo) collapseTo = collapseFrom; // 끝이 앞서면 맞춰줌
+  applyCollapse();
+}
+function setCollapseTo(h) {
+  collapseTo = Math.min(Math.max(h | 0, 0), 23);
+  if (collapseTo < collapseFrom) collapseFrom = collapseTo;
+  applyCollapse();
 }
 
 // ── DOM 헬퍼 ───────────────────────────────────────────────────
@@ -317,14 +332,27 @@ function renderSchedule(view, uid) {
       actions.appendChild(el("span", { class: "vis-badge", text: "공개범위: " + vis.label }));
       actions.appendChild(el("button", { class: "btn btn-sm", onclick: () => openSettingsModal(uid, data) }, "⚙️ 설정"));
     }
-    const hourSel = el("select", { class: "hour-select", title: "표시 시작 시간 (위쪽 접기)" });
+    // 시작 시간(위쪽 접기)
+    const fromSel = el("select", { class: "hour-select", title: "표시 시작 시간 (위쪽 접기)" });
     for (let h = 0; h <= 12; h++) {
-      const opt = el("option", { value: h }, h === 0 ? "⏱ 전체 시간" : `⏱ ${hh(h)}부터`);
+      const opt = el("option", { value: h }, h === 0 ? "⏱ 처음부터" : `⏱ ${hh(h)}부터`);
       if (h === collapseFrom) opt.selected = true;
-      hourSel.appendChild(opt);
+      fromSel.appendChild(opt);
     }
-    hourSel.addEventListener("change", () => setCollapseFrom(+hourSel.value));
-    actions.appendChild(hourSel);
+    fromSel.addEventListener("change", () => setCollapseFrom(+fromSel.value));
+
+    // 끝 시간(아래쪽 접기)
+    const toSel = el("select", { class: "hour-select", title: "표시 끝 시간 (아래쪽 접기)" });
+    for (let h = 12; h <= 23; h++) {
+      const opt = el("option", { value: h }, h === 23 ? "끝까지 ⏱" : `${hh(h + 1)}까지 ⏱`);
+      if (h === collapseTo) opt.selected = true;
+      toSel.appendChild(opt);
+    }
+    toSel.addEventListener("change", () => setCollapseTo(+toSel.value));
+
+    actions.appendChild(fromSel);
+    actions.appendChild(el("span", { class: "range-dash", text: "~" }));
+    actions.appendChild(toSel);
     actions.appendChild(el("button", { class: "btn btn-sm btn-ghost", onclick: copyShareLink(uid) }, "🔗 공유 링크"));
 
     const head = el("div", { class: "schedule-head" }, [
@@ -358,8 +386,8 @@ function renderSchedule(view, uid) {
     grid.appendChild(el("div", { class: "corner gh" }));
     DAYS.forEach((d, i) => grid.appendChild(el("div", { class: "gh" + (i >= 5 ? " weekend" : ""), text: d })));
 
-    // 위에서부터 접기: 선택한 시작 시간 이전(새벽 등)은 숨김
-    const rows = HOURS.filter((h) => h >= collapseFrom);
+    // 접기: 선택한 시작~끝 시간 범위만 표시 (그 밖의 위/아래 시간대는 숨김)
+    const rows = HOURS.filter((h) => h >= collapseFrom && h <= collapseTo);
     (rows.length ? rows : HOURS).forEach((h) => {
       grid.appendChild(el("div", { class: "time", text: hh(h) }));
       DAYS.forEach((_, d) => {

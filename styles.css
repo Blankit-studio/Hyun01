@@ -182,6 +182,7 @@ a { color: inherit; text-decoration: none; }
   border-radius: 10px; padding: 7px 9px; font-size: 13px; font-weight: 700; font-family: inherit; cursor: pointer;
 }
 .hour-select:focus { outline: none; border-color: var(--primary); }
+.range-dash { color: var(--muted); font-weight: 700; align-self: center; }
 
 .mode-hint {
   font-size: 13px; color: var(--muted); margin-bottom: 12px;
