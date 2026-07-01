@@ -39,32 +39,30 @@ let selCtx = null;            // 드래그 선택 상태
 let justDragged = false;      // 드래그 직후 click 무시 플래그
 let longPressTimer = null;    // 모바일 길게누르기 타이머
 let selectionCleanup = null;  // 드래그 리스너 해제 함수
-// 접기 범위: collapseFrom(시작 시간) 이전 · collapseTo(끝 시간) 이후를 숨김
+// 하루 표시 범위: dayStart(시작 시간) ~ dayEnd(끝 시간, 배타적)
+// 자정을 넘어가면 다음날 새벽까지 이어짐. dayEnd===dayStart 이면 24시간 전체.
 const readInt = (key, def, lo, hi) => {
   try { const v = parseInt(localStorage.getItem(key), 10); return Number.isFinite(v) ? Math.min(Math.max(v, lo), hi) : def; }
   catch { return def; }
 };
-let collapseFrom = readInt("collapseFrom", 0, 0, 23);
-let collapseTo = readInt("collapseTo", 23, 0, 23);
+let dayStart = readInt("dayStart", 0, 0, 23);
+let dayEnd = readInt("dayEnd", 0, 0, 23);
 
-function applyCollapse() {
+// 표시할 시간들을 시작 시각부터 순서대로(자정 넘어가며) 반환
+function visibleHours() {
+  const len = ((dayEnd - dayStart + 24) % 24) || 24;
+  return Array.from({ length: len }, (_, i) => (dayStart + i) % 24);
+}
+function applyDayRange() {
   try {
-    localStorage.setItem("collapseFrom", String(collapseFrom));
-    localStorage.setItem("collapseTo", String(collapseTo));
+    localStorage.setItem("dayStart", String(dayStart));
+    localStorage.setItem("dayEnd", String(dayEnd));
   } catch {}
   gridState?.renderHeader?.();
   gridState?.renderGrid?.();
 }
-function setCollapseFrom(h) {
-  collapseFrom = Math.min(Math.max(h | 0, 0), 23);
-  if (collapseFrom > collapseTo) collapseTo = collapseFrom; // 끝이 앞서면 맞춰줌
-  applyCollapse();
-}
-function setCollapseTo(h) {
-  collapseTo = Math.min(Math.max(h | 0, 0), 23);
-  if (collapseTo < collapseFrom) collapseFrom = collapseTo;
-  applyCollapse();
-}
+function setDayStart(h) { dayStart = Math.min(Math.max(h | 0, 0), 23); applyDayRange(); }
+function setDayEnd(h) { dayEnd = Math.min(Math.max(h | 0, 0), 23); applyDayRange(); }
 
 // ── DOM 헬퍼 ───────────────────────────────────────────────────
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -332,27 +330,29 @@ function renderSchedule(view, uid) {
       actions.appendChild(el("span", { class: "vis-badge", text: "공개범위: " + vis.label }));
       actions.appendChild(el("button", { class: "btn btn-sm", onclick: () => openSettingsModal(uid, data) }, "⚙️ 설정"));
     }
-    // 시작 시간(위쪽 접기)
-    const fromSel = el("select", { class: "hour-select", title: "표시 시작 시간 (위쪽 접기)" });
-    for (let h = 0; h <= 12; h++) {
-      const opt = el("option", { value: h }, h === 0 ? "⏱ 처음부터" : `⏱ ${hh(h)}부터`);
-      if (h === collapseFrom) opt.selected = true;
-      fromSel.appendChild(opt);
+    // 하루 시작 시간
+    const startSel = el("select", { class: "hour-select", title: "하루 시작 시간" });
+    for (let h = 0; h <= 23; h++) {
+      const opt = el("option", { value: h }, `⏱ ${hh(h)} 시작`);
+      if (h === dayStart) opt.selected = true;
+      startSel.appendChild(opt);
     }
-    fromSel.addEventListener("change", () => setCollapseFrom(+fromSel.value));
+    startSel.addEventListener("change", () => setDayStart(+startSel.value));
 
-    // 끝 시간(아래쪽 접기)
-    const toSel = el("select", { class: "hour-select", title: "표시 끝 시간 (아래쪽 접기)" });
-    for (let h = 12; h <= 23; h++) {
-      const opt = el("option", { value: h }, h === 23 ? "끝까지 ⏱" : `${hh(h + 1)}까지 ⏱`);
-      if (h === collapseTo) opt.selected = true;
-      toSel.appendChild(opt);
+    // 하루 끝 시간 — 시작 시간 이후로 이어지며 자정 넘으면 '익일' 표기
+    const endSel = el("select", { class: "hour-select", title: "하루 끝 시간 (자정 넘어가면 익일)" });
+    for (let i = 1; i <= 24; i++) {
+      const endH = (dayStart + i) % 24;
+      const nextDay = endH <= dayStart; // 시작 이하로 돌아오면 다음날
+      const opt = el("option", { value: endH }, `${nextDay ? "익일 " : ""}${hh(endH)} 끝`);
+      if (endH === dayEnd) opt.selected = true;
+      endSel.appendChild(opt);
     }
-    toSel.addEventListener("change", () => setCollapseTo(+toSel.value));
+    endSel.addEventListener("change", () => setDayEnd(+endSel.value));
 
-    actions.appendChild(fromSel);
+    actions.appendChild(startSel);
     actions.appendChild(el("span", { class: "range-dash", text: "~" }));
-    actions.appendChild(toSel);
+    actions.appendChild(endSel);
     actions.appendChild(el("button", { class: "btn btn-sm btn-ghost", onclick: copyShareLink(uid) }, "🔗 공유 링크"));
 
     const head = el("div", { class: "schedule-head" }, [
@@ -386,10 +386,15 @@ function renderSchedule(view, uid) {
     grid.appendChild(el("div", { class: "corner gh" }));
     DAYS.forEach((d, i) => grid.appendChild(el("div", { class: "gh" + (i >= 5 ? " weekend" : ""), text: d })));
 
-    // 접기: 선택한 시작~끝 시간 범위만 표시 (그 밖의 위/아래 시간대는 숨김)
-    const rows = HOURS.filter((h) => h >= collapseFrom && h <= collapseTo);
-    (rows.length ? rows : HOURS).forEach((h) => {
-      grid.appendChild(el("div", { class: "time", text: hh(h) }));
+    // 하루 시작~끝 시간 (자정을 넘어가면 다음날 새벽까지 이어짐)
+    const rows = visibleHours();
+    gridState.hourOrder = rows;
+    gridState.hourIndex = {};
+    rows.forEach((h, i) => (gridState.hourIndex[h] = i));
+
+    rows.forEach((h, i) => {
+      const dayBreak = h === 0 && i > 0 ? " daybreak" : ""; // 자정 경계 표시
+      grid.appendChild(el("div", { class: "time" + dayBreak, text: hh(h) }));
       DAYS.forEach((_, d) => {
         const key = cellKey(d, h);
         const plan = cells[key];
@@ -411,7 +416,7 @@ function renderSchedule(view, uid) {
         const cell = el(
           "div",
           {
-            class: "cell" + (plan && (plan.title || plan.desc) ? " has-plan" : "") + (res ? " reserved" : ""),
+            class: "cell" + (plan && (plan.title || plan.desc) ? " has-plan" : "") + (res ? " reserved" : "") + dayBreak,
             "data-day": d, "data-hour": h,
             onclick: () => {
               if (justDragged) { justDragged = false; return; }
@@ -503,11 +508,14 @@ function renderSchedule(view, uid) {
 
 // ── 여러 칸 드래그 선택 ────────────────────────────────────────
 function selRange(a, b) {
-  return { d0: Math.min(a.d, b.d), d1: Math.max(a.d, b.d), h0: Math.min(a.h, b.h), h1: Math.max(a.h, b.h) };
+  const idx = gridState?.hourIndex || {};
+  const ia = idx[a.h] ?? 0, ib = idx[b.h] ?? 0;
+  return { d0: Math.min(a.d, b.d), d1: Math.max(a.d, b.d), i0: Math.min(ia, ib), i1: Math.max(ia, ib) };
 }
 function selList(r) {
+  const order = gridState?.hourOrder || HOURS;
   const l = [];
-  for (let d = r.d0; d <= r.d1; d++) for (let h = r.h0; h <= r.h1; h++) l.push({ d, h });
+  for (let d = r.d0; d <= r.d1; d++) for (let i = r.i0; i <= r.i1; i++) l.push({ d, h: order[i] });
   return l;
 }
 function highlightSel(r) {
