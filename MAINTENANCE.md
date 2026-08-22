@@ -18,7 +18,8 @@
 | `firebase-config.js` | Firebase 프로젝트 연결값 (웹 공개용 값) |
 | `firestore.rules` | Firestore 보안 규칙 (콘솔에 별도 게시 필요) |
 | `logo.svg` | 파비콘/로고 |
-| `firebase.json`, `.firebaserc` | (선택) Firebase Hosting 배포 설정 |
+| `firebase.json`, `.firebaserc` | Firebase 배포 설정 (Hosting + Firestore 규칙) |
+| `deploy-rules.sh` | **보안 규칙 한 줄 배포** 스크립트 |
 
 ### app.js 안에서 자주 찾는 지점 (상단 상수)
 ```js
@@ -102,7 +103,16 @@ sed -i 's/styles\.css?v=8/styles.css?v=9/' index.html
 4. **Authentication → Settings → 승인된 도메인**에 `blankit-studio.github.io` 포함
 
 ### 보안 규칙을 바꿨다면
-`firestore.rules` 파일 수정 → **콘솔 Firestore → 규칙 탭에 붙여넣고 "게시"**. (git push만으로는 규칙이 적용되지 않습니다. 콘솔 게시가 별도로 필요.)
+`firestore.rules` 파일 수정 후 **둘 중 하나**로 반영합니다. (git push만으로는 규칙이 적용되지 않습니다.)
+
+**방법 A — 명령 한 줄 (권장)**
+```bash
+bash deploy-rules.sh
+```
+CLI 설치·로그인까지 알아서 처리하고 `firestore.rules`를 그대로 배포합니다. 처음 한 번만 브라우저 로그인이 뜹니다.
+
+**방법 B — 콘솔에 붙여넣기**
+콘솔 Firestore → 규칙 탭 → 전체 삭제(Ctrl+A→Delete) 후 `firestore.rules` 내용 붙여넣기 → **게시**.
 
 > 📌 **2026-06 규칙 강화 (재게시 필요)**: 예약 문서 ID(`d{요일}_h{시}`)와 내부 `day`/`hour` 값이 일치해야만 생성·수정되도록 검증을 추가했습니다. 이전 규칙에서는 조작된 클라이언트가 ID와 다른 시간대를 써넣어 **"정원 1명" 보장을 우회**할 수 있었습니다. 함께 `day`(0~6)·`hour`(0~23) 범위 검증과 문자열 길이 상한(note 200, byName 100, mark 8, 비공개 메모 200)도 추가했습니다. **콘솔에 새 규칙을 반드시 재게시하세요.**
 
