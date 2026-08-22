@@ -27,6 +27,8 @@ const VISIBILITY = {
 const cellKey = (d, h) => `d${d}_h${h}`;
 const hh = (h) => String(h).padStart(2, "0") + ":00";
 const memoId = (uid, slotId) => `${uid}__${slotId}`;
+// 예약 승인 상태: status 없는 구버전 예약은 승인된 것으로 간주
+const isPending = (r) => !!r && r.status === "pending";
 
 // ── 전역 상태 ──────────────────────────────────────────────────
 let app, auth, db;
@@ -329,6 +331,7 @@ function renderSchedule(view, uid) {
     if (isOwner) {
       actions.appendChild(el("span", { class: "vis-badge", text: "공개범위: " + vis.label }));
       actions.appendChild(el("button", { class: "btn btn-sm", onclick: () => openSettingsModal(uid, data) }, "⚙️ 설정"));
+      actions.appendChild(el("button", { class: "btn btn-sm", onclick: () => openCleanupModal(uid) }, "🧹 예약 정리"));
     }
     // 하루 시작 시간
     const startSel = el("select", { class: "hour-select", title: "하루 시작 시간" });
@@ -372,8 +375,8 @@ function renderSchedule(view, uid) {
     hintBox.appendChild(
       el("div", { class: "mode-hint" }, [
         isOwner
-          ? "✏️ 칸을 클릭하면 일정을 작성/수정할 수 있어요. 여러 칸은 드래그(모바일은 길게 눌러 드래그)로 한 번에 작성할 수 있습니다."
-          : "🖱️ 빈 칸을 클릭해 예약하세요. 로그인 없이 게스트로도 가능해요. 여러 시간은 드래그(모바일은 길게 눌러 드래그)로 한 번에 예약할 수 있고, 한 칸당 한 명만 예약됩니다.",
+          ? "✏️ 칸을 클릭해 일정을 작성/수정하세요. 여러 칸은 드래그로 한 번에 작성할 수 있어요. 점선으로 표시된 칸은 ⏳ 승인 대기 중인 예약이며, 칸을 눌러 승인 또는 거절할 수 있습니다."
+          : "🖱️ 빈 칸을 클릭해 예약하세요. 로그인 없이 게스트로도 가능해요. 여러 시간은 드래그로 한 번에 예약할 수 있고, 한 칸당 한 명만 예약됩니다. 예약은 시간표 주인의 승인 후 확정됩니다.",
       ])
     );
   }
@@ -407,16 +410,18 @@ function renderSchedule(view, uid) {
         const resRow = el("div", { class: "res-row" });
         if (res) {
           const mine = currentUser && res.byUid === currentUser.uid;
+          const pend = isPending(res);
           resRow.appendChild(
-            el("span", { class: "res-dot" + (mine ? " mine" : ""), title: `${res.byName}${res.note ? ": " + res.note : ""}` }, [
-              res.mark || "📌",
-            ])
+            el("span", {
+              class: "res-dot" + (mine ? " mine" : "") + (pend ? " pending" : ""),
+              title: `${res.byName}${pend ? " · 승인 대기" : " · 승인됨"}${res.note ? ": " + res.note : ""}`,
+            }, [res.mark || "📌"])
           );
         }
         const cell = el(
           "div",
           {
-            class: "cell" + (plan && (plan.title || plan.desc) ? " has-plan" : "") + (res ? " reserved" : "") + dayBreak,
+            class: "cell" + (plan && (plan.title || plan.desc) ? " has-plan" : "") + (res ? (isPending(res) ? " reserved pending" : " reserved") : "") + dayBreak,
             "data-day": d, "data-hour": h,
             onclick: () => {
               if (justDragged) { justDragged = false; return; }
@@ -610,17 +615,24 @@ function openPlanModal(uid, day, hour, plan) {
     resBox.innerHTML = "";
     if (!res) return;
     resBox.appendChild(el("div", { class: "divider" }));
+    const pend = isPending(res);
     resBox.appendChild(
       el("div", { class: "field" }, [
-        el("label", { text: "이 시간의 예약" }),
+        el("label", { text: pend ? "이 시간의 예약 요청 (승인 대기)" : "이 시간의 예약 (승인됨)" }),
         el("div", { class: "res-item" }, [
           el("span", { class: "res-mark", text: res.mark || "📌" }),
           el("img", { class: "avatar avatar-sm", src: res.byPhoto || fallbackAvatar(res.byName), alt: "" }),
           el("div", { class: "grow" }, [
-            el("div", { class: "who", text: res.byName || "익명" }),
+            el("div", { class: "who" }, [
+              res.byName || "익명",
+              el("span", { class: "status-badge" + (pend ? " wait" : "") , text: pend ? "승인 대기" : "승인됨" }),
+            ]),
             res.note ? el("div", { class: "note", text: res.note }) : el("div", { class: "note", text: "(공개 메모 없음)" }),
           ]),
-          el("button", { class: "btn btn-sm btn-danger", onclick: () => removeReservation(uid, day, hour) }, "예약 삭제"),
+        ]),
+        el("div", { class: "res-actions" }, [
+          pend ? el("button", { class: "btn btn-sm btn-primary", onclick: () => approveReservation(uid, day, hour) }, "✅ 승인") : null,
+          el("button", { class: "btn btn-sm btn-danger", onclick: () => removeReservation(uid, day, hour) }, pend ? "✖ 거절(삭제)" : "예약 삭제"),
         ]),
       ])
     );
@@ -712,7 +724,7 @@ async function openReservationModal(uid, day, hour, plan) {
   if (existing && !mine) {
     openModal({
       title: `${DAYS[day]}요일 ${hh(hour)} 예약`,
-      sub: "이미 예약된 시간입니다. (정원 1명)",
+      sub: isPending(existing) ? "이미 예약 요청이 있는 시간입니다. (승인 대기 · 정원 1명)" : "이미 예약이 확정된 시간입니다. (정원 1명)",
       body: [
         planInfo,
         el("div", { class: "field" }, [
@@ -721,7 +733,10 @@ async function openReservationModal(uid, day, hour, plan) {
             el("span", { class: "res-mark", text: existing.mark || "📌" }),
             el("img", { class: "avatar avatar-sm", src: existing.byPhoto || fallbackAvatar(existing.byName), alt: "" }),
             el("div", { class: "grow" }, [
-              el("div", { class: "who", text: existing.byName || "익명" }),
+              el("div", { class: "who" }, [
+                existing.byName || "익명",
+                el("span", { class: "status-badge" + (isPending(existing) ? " wait" : ""), text: isPending(existing) ? "승인 대기" : "승인됨" }),
+              ]),
               existing.note ? el("div", { class: "note", text: existing.note }) : null,
             ]),
           ]),
@@ -790,7 +805,9 @@ async function openReservationModal(uid, day, hour, plan) {
   openModal({
     title: `${DAYS[day]}요일 ${hh(hour)} 예약`,
     sub: mine
-      ? "내 예약을 수정할 수 있어요."
+      ? (isPending(existing)
+          ? "⏳ 시간표 주인의 승인을 기다리는 중입니다. 내용은 수정할 수 있어요."
+          : "✅ 승인된 예약입니다. 내용을 수정하면 다시 승인 대기 상태가 됩니다.")
       : isGuest
       ? "로그인 없이 게스트로 예약할 수 있어요. (정원 1명)"
       : "마크를 고르고 메모를 남겨 예약하세요. (정원 1명)",
@@ -827,6 +844,7 @@ async function saveReservation(uid, day, hour, mark, note, privateText, byName, 
       byName: byName || user.displayName || "게스트",
       byPhoto: user.photoURL || "",
       isGuest: user.isAnonymous || false,
+      status: "pending",           // 시간표 주인의 승인 대기
       createdAt: serverTimestamp(),
     });
     // 비공개 메모 저장/삭제
@@ -956,7 +974,7 @@ function openBulkReserveModal(uid, list) {
 
   openModal({
     title: `${list.length}개 시간 일괄 예약`,
-    sub: blocked ? `${blocked}개는 이미 예약되어 제외됩니다.` : "선택한 모든 칸을 같은 내용으로 예약합니다.",
+    sub: (blocked ? `${blocked}개는 이미 예약되어 제외됩니다. ` : "선택한 모든 칸을 같은 내용으로 예약합니다. ") + "예약은 주인 승인 후 확정됩니다.",
     body,
     actions: [
       el("button", { class: "btn btn-ghost", onclick: closeModal }, "닫기"),
@@ -997,6 +1015,7 @@ async function bulkReserve(uid, list, mark, note, privateText, byName, user) {
         byName: byName || user.displayName || "게스트",
         byPhoto: user.photoURL || "",
         isGuest: user.isAnonymous || false,
+        status: "pending",
         createdAt: serverTimestamp(),
       });
       const mref = doc(db, "privateMemos", memoId(uid, slotId));
@@ -1012,6 +1031,62 @@ async function bulkReserve(uid, list, mark, note, privateText, byName, user) {
     }
   }
   return { done, skipped };
+}
+
+// 시간표 주인: 예약 승인
+async function approveReservation(uid, day, hour) {
+  const slotId = cellKey(day, hour);
+  const res = gridState?.resByCell?.[slotId];
+  const docId = res?.id || slotId;
+  try {
+    await updateDoc(doc(db, "schedules", uid, "reservations", docId), { status: "approved" });
+    toast("예약을 승인했습니다.");
+  } catch (e) {
+    console.error(e);
+    toast("승인 실패: " + (e.code || e.message), true);
+  }
+}
+
+// 시간표 주인: 예약 일괄 정리
+function openCleanupModal(uid) {
+  const list = Object.values(gridState?.resByCell || {});
+  const pendingN = list.filter(isPending).length;
+  openModal({
+    title: "예약 정리",
+    sub: `현재 예약 ${list.length}건 · 승인 대기 ${pendingN}건`,
+    body: [
+      el("div", { class: "mode-hint", style: "margin:0", text: "삭제한 예약은 되돌릴 수 없습니다. 지난 주 예약을 비우고 새로 받을 때 사용하세요." }),
+    ],
+    actions: [
+      el("button", { class: "btn btn-ghost", onclick: closeModal }, "취소"),
+      pendingN
+        ? el("button", { class: "btn", onclick: async () => { closeModal(); await clearReservations(uid, true); } }, `대기 ${pendingN}건 삭제`)
+        : null,
+      list.length
+        ? el("button", { class: "btn btn-danger", onclick: async () => { closeModal(); await clearReservations(uid, false); } }, `전체 ${list.length}건 삭제`)
+        : null,
+    ],
+  });
+}
+
+async function clearReservations(uid, onlyPending) {
+  try {
+    const snap = await getDocs(collection(db, "schedules", uid, "reservations"));
+    let n = 0, fail = 0;
+    for (const d of snap.docs) {
+      if (onlyPending && !isPending(d.data())) continue;
+      try {
+        await deleteDoc(d.ref);
+        // 예약자의 비공개 메모는 본인만 지울 수 있으므로 실패해도 무시
+        await deleteDoc(doc(db, "privateMemos", memoId(uid, d.id))).catch(() => {});
+        n++;
+      } catch { fail++; }
+    }
+    toast(`${n}건을 삭제했습니다${fail ? ` · ${fail}건 실패` : ""}.`, fail > 0);
+  } catch (e) {
+    console.error(e);
+    toast("정리 실패: " + (e.code || e.message), true);
+  }
 }
 
 // 설정: 소개 + 공개 범위

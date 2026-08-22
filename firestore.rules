@@ -46,17 +46,26 @@ service cloud.firestore {
         }
 
         // 빈 칸일 때만 create 가 호출되고, 본인 명의로만 가능
+        // status 는 반드시 'pending' — 예약자가 스스로 승인할 수 없음
         allow create: if request.auth != null
                       && request.resource.data.byUid == request.auth.uid
+                      && request.resource.data.status == 'pending'
                       && slotMatches()
                       && validData();
 
-        // 이미 예약된 칸의 수정은 예약자 본인만 (타인의 덮어쓰기 차단)
+        // 예약자 본인의 수정 (내용이 바뀌면 다시 승인 대기 상태)
         allow update: if request.auth != null
                       && resource.data.byUid == request.auth.uid
                       && request.resource.data.byUid == request.auth.uid
+                      && request.resource.data.status == 'pending'
                       && slotMatches()
                       && validData();
+
+        // 시간표 주인의 승인 — status 필드만 'approved' 로 변경 가능
+        allow update: if request.auth != null
+                      && request.auth.uid == uid
+                      && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+                      && request.resource.data.status == 'approved';
 
         // 예약자 본인 또는 시간표 주인이 삭제 (구버전 랜덤 ID 예약도 삭제 가능)
         allow delete: if request.auth != null
