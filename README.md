@@ -1,9 +1,13 @@
-# 🗓️ 위클리 — 주간 시간표 공유 & 예약
+# Weekly — 주간 시간표 공유 & 예약
+
+**🌐 https://blankit-studio.github.io/Schedule/**
 
 구글 로그인으로 **월·화·수·목·금·토·일** 일주일 시간 분배를 자세히 작성하고 공유하는 웹사이트입니다.
 다른 사람은 공개된 시간표를 둘러보고, **원하는 시간 칸을 골라 마크를 남기고 예약**할 수 있습니다.
 
-순수 정적 사이트(HTML/CSS/JS) + **Firebase**(구글 인증 + Firestore) 구조라서 별도 서버가 필요 없습니다.
+순수 정적 사이트(HTML/CSS/JS) + **Firebase**(구글·익명 인증 + Firestore) 구조라서 별도 서버가 필요 없습니다.
+
+> 🛠️ 수정·운영 방법은 [`MAINTENANCE.md`](./MAINTENANCE.md) 를 참고하세요.
 
 ---
 
@@ -17,8 +21,11 @@
 - **게스트 예약** — 로그인 없이도 이름만 입력해 예약 가능(익명 인증). 같은 브라우저에서 본인 예약 수정·취소 가능
 - **공개 / 비공개 메모** — 상대도 보는 공개 메모와, 예약자 본인만 보는 🔒 비공개 메모 분리
 - **공개 범위 설정** — 공개 / 링크 공개 / 비공개 중 선택
+- **하루 시간 범위 지정** — 하루의 시작·끝 시간을 직접 선택. **자정을 넘겨 익일 새벽까지** 이어서 표시 가능(경계에 구분선)
 - **실시간 반영** — 시간표 작성·예약이 Firestore `onSnapshot` 으로 즉시 갱신
 - **공유 링크** — 내 시간표 URL을 복사해 공유
+- **다크 / 라이트 모드** — 헤더 토글로 전환, 선택은 브라우저에 저장
+- **3색 디자인** — `#000000` · `#FFFFFF` · `#00ABFC` 로 통일된 UI
 - **권한 관리** — 시간표는 본인만 편집, 예약은 작성자/시간표 주인이 삭제
 
 ---
@@ -111,7 +118,7 @@ schedules/{uid}
 
 # 예약: 문서 ID가 "d{요일}_h{시}" 고정값 → 한 칸당 1건(정원 1명)
 schedules/{uid}/reservations/{slotId}
-   { day, hour, mark, note(공개), byUid, byName, byPhoto, createdAt }
+   { day, hour, mark, note(공개), byUid, byName, byPhoto, isGuest, createdAt }
 
 # 비공개 메모: 작성자 본인만 읽기/쓰기 가능 (문서 ID = "{uid}__{slotId}")
 privateMemos/{memoId}
@@ -129,16 +136,22 @@ privateMemos/{memoId}
 
 | 파일 | 설명 |
 |------|------|
-| `index.html` | 페이지 골격 |
-| `styles.css` | 스타일 |
-| `app.js` | 앱 로직 (인증·라우팅·시간표·예약) |
+| `index.html` | 페이지 골격 (헤더·로고·테마 토글, 캐시 버전 `?v=`) |
+| `styles.css` | 스타일 (다크/라이트 팔레트) |
+| `app.js` | 앱 로직 (인증·라우팅·시간표·예약·드래그·시간범위) |
 | `firebase-config.js` | **본인 Firebase 설정값 입력** |
-| `firestore.rules` | Firestore 보안 규칙 |
+| `firestore.rules` | Firestore 보안 규칙 (콘솔 게시 필요) |
+| `deploy-rules.sh` | 보안 규칙 한 줄 배포 스크립트 |
+| `logo.svg` | 파비콘/로고 |
+| `MAINTENANCE.md` | 유지보수 가이드 |
 
 ---
 
 ## 🔧 커스터마이즈 팁
 
-- 표시 시간 범위: `app.js` 상단의 `START_HOUR`, `END_HOUR`
+- 격자 전체 시간 범위: `app.js` 상단의 `START_HOUR`, `END_HOUR` (화면 표시 범위는 헤더에서 사용자가 선택)
 - 예약 마크 이모지: `app.js` 의 `MARKS` 배열
-- 요일/색상: `DAYS` 및 `styles.css` 의 CSS 변수(`:root`)
+- 요일: `app.js` 의 `DAYS` 배열
+- 색상: `styles.css` 의 `:root`(다크) / `html[data-theme="light"]`(라이트) 변수
+
+> ⚠️ `styles.css`나 `app.js`를 수정하면 `index.html`의 `?v=` 숫자를 올려야 브라우저 캐시가 갱신됩니다. 자세한 내용은 [`MAINTENANCE.md`](./MAINTENANCE.md).
