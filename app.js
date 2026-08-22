@@ -41,9 +41,12 @@ let longPressTimer = null;    // 모바일 길게누르기 타이머
 let selectionCleanup = null;  // 드래그 리스너 해제 함수
 // 하루 표시 범위: dayStart(시작 시간) ~ dayEnd(끝 시간, 배타적)
 // 자정을 넘어가면 다음날 새벽까지 이어짐. dayEnd===dayStart 이면 24시간 전체.
+// localStorage 안전 래퍼 — 시크릿 모드/쿠키 차단 시 접근만으로 예외가 나므로 항상 감싼다
+const lsGet = (key, def = null) => { try { const v = localStorage.getItem(key); return v === null ? def : v; } catch { return def; } };
+const lsSet = (key, value) => { try { localStorage.setItem(key, value); } catch {} };
 const readInt = (key, def, lo, hi) => {
-  try { const v = parseInt(localStorage.getItem(key), 10); return Number.isFinite(v) ? Math.min(Math.max(v, lo), hi) : def; }
-  catch { return def; }
+  const v = parseInt(lsGet(key), 10);
+  return Number.isFinite(v) ? Math.min(Math.max(v, lo), hi) : def;
 };
 let dayStart = readInt("dayStart", 0, 0, 23);
 let dayEnd = readInt("dayEnd", 0, 0, 23);
@@ -54,10 +57,8 @@ function visibleHours() {
   return Array.from({ length: len }, (_, i) => (dayStart + i) % 24);
 }
 function applyDayRange() {
-  try {
-    localStorage.setItem("dayStart", String(dayStart));
-    localStorage.setItem("dayEnd", String(dayEnd));
-  } catch {}
+  lsSet("dayStart", String(dayStart));
+  lsSet("dayEnd", String(dayEnd));
   gridState?.renderHeader?.();
   gridState?.renderGrid?.();
 }
@@ -94,15 +95,14 @@ function toast(msg, isError = false) {
 // ── 테마(다크/라이트) ──────────────────────────────────────────
 function applyTheme(theme) {
   document.documentElement.setAttribute("data-theme", theme);
-  try { localStorage.setItem("theme", theme); } catch {}
+  lsSet("theme", theme);
   const btn = $("#themeToggle");
   if (btn) btn.textContent = theme === "light" ? "🌙" : "☀️"; // 전환될 모드 아이콘
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.setAttribute("content", theme === "light" ? "#ffffff" : "#000000");
 }
 function initTheme() {
-  let saved = "dark";
-  try { saved = localStorage.getItem("theme") || "dark"; } catch {}
+  const saved = lsGet("theme", "dark") || "dark";
   applyTheme(saved === "light" ? "light" : "dark");
   const btn = $("#themeToggle");
   if (btn) btn.addEventListener("click", () => {
@@ -755,7 +755,7 @@ async function openReservationModal(uid, day, hour, plan) {
 
   // 게스트는 이름 입력 (이전에 쓴 이름 기억)
   const nameInput = el("input", { type: "text", maxlength: "20", placeholder: "표시할 이름 (예: 홍길동)" });
-  nameInput.value = localStorage.getItem("guestName") || "";
+  nameInput.value = lsGet("guestName", "");
 
   const actions = [el("button", { class: "btn btn-ghost", onclick: closeModal }, "닫기")];
   if (mine) {
@@ -769,7 +769,7 @@ async function openReservationModal(uid, day, hour, plan) {
         if (isGuest) {
           byName = nameInput.value.trim();
           if (!byName) { toast("이름을 입력하세요.", true); return; }
-          localStorage.setItem("guestName", byName);
+          lsSet("guestName", byName);
         }
         const user = await ensureReserver();
         if (!user) return;
@@ -944,7 +944,7 @@ function openBulkReserveModal(uid, list) {
   const noteInput = el("textarea", { maxlength: "200", placeholder: "상대에게 보이는 공개 메모 (모든 칸에 동일 적용)" });
   const privateInput = el("textarea", { maxlength: "200", placeholder: "나만 볼 수 있는 메모 (모든 칸에 동일 적용)" });
   const nameInput = el("input", { type: "text", maxlength: "20", placeholder: "표시할 이름 (예: 홍길동)" });
-  nameInput.value = localStorage.getItem("guestName") || "";
+  nameInput.value = lsGet("guestName", "");
 
   const body = [];
   if (isGuest) body.push(el("div", { class: "field" }, [el("label", { text: "이름 (게스트)" }), nameInput]));
@@ -968,7 +968,7 @@ function openBulkReserveModal(uid, list) {
           if (isGuest) {
             byName = nameInput.value.trim();
             if (!byName) { toast("이름을 입력하세요.", true); return; }
-            localStorage.setItem("guestName", byName);
+            lsSet("guestName", byName);
           }
           const user = await ensureReserver();
           if (!user) return;
