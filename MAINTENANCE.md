@@ -19,7 +19,8 @@
 | `firestore.rules` | Firestore 보안 규칙 (콘솔에 별도 게시 필요) |
 | `logo.svg` | 파비콘/로고 |
 | `firebase.json`, `.firebaserc` | Firebase 배포 설정 (Hosting + Firestore 규칙) |
-| `deploy-rules.sh` | **보안 규칙 한 줄 배포** 스크립트 |
+| `deploy-rules.sh` | **보안 규칙 한 줄 배포** 스크립트 (수동) |
+| `.github/workflows/deploy-rules.yml` | **규칙 자동 배포** (push 시 실행) |
 
 ### app.js 안에서 자주 찾는 지점 (상단 상수)
 ```js
@@ -113,6 +114,18 @@ CLI 설치·로그인까지 알아서 처리하고 `firestore.rules`를 그대�
 
 **방법 B — 콘솔에 붙여넣기**
 콘솔 Firestore → 규칙 탭 → 전체 삭제(Ctrl+A→Delete) 후 `firestore.rules` 내용 붙여넣기 → **게시**.
+
+**방법 C — 완전 자동 (GitHub Actions) ⭐**
+`.github/workflows/deploy-rules.yml` 이 설정되어 있어, **`firestore.rules`를 push하면 규칙이 자동 배포**됩니다.
+최초 1회만 아래 시크릿을 등록하면 그 뒤로는 아무것도 하지 않아도 됩니다.
+
+1. Firebase 콘솔 → ⚙️ **프로젝트 설정 → 서비스 계정** → **새 비공개 키 생성** → JSON 파일 다운로드
+2. GitHub 저장소 → **Settings → Secrets and variables → Actions → New repository secret**
+   - Name: `FIREBASE_SERVICE_ACCOUNT`
+   - Secret: 다운로드한 **JSON 파일 내용 전체**를 붙여넣기
+3. 저장소 **Actions** 탭에서 `Deploy Firestore Rules` 워크플로를 한 번 수동 실행(`Run workflow`)해 확인
+
+> 🔐 서비스 계정 JSON은 프로젝트 관리 권한을 가진 **민감 정보**입니다. 반드시 GitHub 시크릿으로만 보관하고 저장소에 커밋하지 마세요(`.gitignore`에 이미 차단되어 있습니다).
 
 > ⚠️ **2026-06 (2차) 예약 승인 규칙 — 재게시 필요**: 예약 생성 시 `status`는 반드시 `'pending'`이어야 하고(예약자가 스스로 승인 불가), **시간표 주인만 `status`를 `'approved'`로 변경**할 수 있도록 규칙을 추가했습니다. 승인 기능을 쓰려면 **콘솔에 새 규칙을 재게시**하세요.
 

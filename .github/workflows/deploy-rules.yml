@@ -1,0 +1,53 @@
+# Firestore 보안 규칙 자동 배포
+#
+# firestore.rules 를 push 하면 자동으로 Firebase에 게시됩니다.
+# 최초 1회만: 저장소 Settings → Secrets and variables → Actions 에
+#   FIREBASE_SERVICE_ACCOUNT  라는 이름으로 서비스 계정 JSON 전체를 등록하세요.
+#   (Firebase 콘솔 → 프로젝트 설정 → 서비스 계정 → 새 비공개 키 생성)
+
+name: Deploy Firestore Rules
+
+on:
+  push:
+    paths:
+      - "firestore.rules"
+      - "firebase.json"
+      - ".firebaserc"
+      - ".github/workflows/deploy-rules.yml"
+  workflow_dispatch: {}   # 수동 실행 버튼
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 시크릿 등록 여부 확인
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          if [ -z "$SA" ]; then
+            echo "::error::FIREBASE_SERVICE_ACCOUNT 시크릿이 없습니다. 저장소 Settings → Secrets and variables → Actions 에서 등록하세요."
+            exit 1
+          fi
+
+      - name: Firebase CLI 설치
+        run: npm install -g firebase-tools
+
+      - name: 서비스 계정 키 저장
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: printf '%s' "$SA" > "$RUNNER_TEMP/sa.json"
+
+      - name: 규칙 배포
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/sa.json
+        run: firebase deploy --only firestore:rules --project web-schedule-fe24a --non-interactive
+
+      - name: 키 파일 삭제
+        if: always()
+        run: rm -f "$RUNNER_TEMP/sa.json"
