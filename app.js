@@ -332,6 +332,14 @@ function renderSchedule(view, uid) {
       actions.appendChild(el("span", { class: "vis-badge", text: "공개범위: " + vis.label }));
       actions.appendChild(el("button", { class: "btn btn-sm", onclick: () => openSettingsModal(uid, data) }, "⚙️ 설정"));
       actions.appendChild(el("button", { class: "btn btn-sm", onclick: () => openCleanupModal(uid) }, "🧹 예약 정리"));
+      // 승인 대기 건은 화면 시간범위 밖에 있어도 여기서 처리할 수 있어야 한다
+      const pendingList = Object.values(gridState?.resByCell || {}).filter(isPending);
+      if (pendingList.length) {
+        actions.appendChild(
+          el("button", { class: "btn btn-sm btn-primary", onclick: () => openPendingModal(uid) },
+             `⏳ 승인 대기 ${pendingList.length}`)
+        );
+      }
     }
     // 하루 시작 시간
     const startSel = el("select", { class: "hour-select", title: "하루 시작 시간" });
@@ -487,7 +495,14 @@ function renderSchedule(view, uid) {
         map[cellKey(r.day, r.hour)] = r; // 정원 1명: 슬롯당 1건
       });
       gridState.resByCell = map;
-      if (gridState.scheduleData) renderGrid();
+      // 헤더는 승인 대기 건수가 바뀔 때만 다시 그린다 (시간 선택 드롭다운 초기화 방지)
+      const pendingN = Object.values(map).filter(isPending).length;
+      const headerNeedsUpdate = pendingN !== gridState.pendingN;
+      gridState.pendingN = pendingN;
+      if (gridState.scheduleData) {
+        if (headerNeedsUpdate) renderHeader();
+        renderGrid();
+      }
       if (typeof modalOnRes === "function") modalOnRes();
     },
     (err) => console.error("예약 구독 오류", err)
@@ -1045,6 +1060,49 @@ async function approveReservation(uid, day, hour) {
     console.error(e);
     toast("승인 실패: " + (e.code || e.message), true);
   }
+}
+
+// 시간표 주인: 승인 대기 목록 (표시 시간범위 밖의 요청도 모두 처리 가능)
+function openPendingModal(uid) {
+  const listWrap = el("div", { class: "res-list" });
+
+  const renderList = () => {
+    const items = Object.values(gridState?.resByCell || {})
+      .filter(isPending)
+      .sort((a, b) => (a.day - b.day) || (a.hour - b.hour));
+    listWrap.innerHTML = "";
+    if (!items.length) {
+      listWrap.appendChild(el("div", { class: "card-sub", text: "승인 대기 중인 예약이 없습니다." }));
+      return;
+    }
+    items.forEach((r) => {
+      listWrap.appendChild(
+        el("div", { class: "res-item" }, [
+          el("span", { class: "res-mark", text: r.mark || "📌" }),
+          el("div", { class: "grow" }, [
+            el("div", { class: "who" }, [
+              `${DAYS[r.day]} ${hh(r.hour)}`,
+              el("span", { class: "status-badge wait", text: r.byName || "익명" }),
+            ]),
+            r.note ? el("div", { class: "note", text: r.note }) : null,
+          ]),
+          el("button", { class: "btn btn-sm btn-primary", onclick: () => approveReservation(uid, r.day, r.hour) }, "승인"),
+          el("button", { class: "btn btn-sm btn-danger", onclick: () => removeReservation(uid, r.day, r.hour) }, "거절"),
+        ])
+      );
+    });
+  };
+
+  renderList();
+  modalOnRes = renderList; // 실시간 갱신
+
+  openModal({
+    title: "승인 대기 예약",
+    sub: "표시 중인 시간 범위 밖의 요청도 여기서 모두 처리할 수 있습니다.",
+    body: [listWrap],
+    actions: [el("button", { class: "btn btn-ghost", onclick: closeModal }, "닫기")],
+    onClose: () => { modalOnRes = null; },
+  });
 }
 
 // 시간표 주인: 예약 일괄 정리
