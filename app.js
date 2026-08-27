@@ -243,11 +243,11 @@ function route() {
 async function renderHome(view) {
   view.appendChild(
     el("section", { class: "hero" }, [
-      el("h1", { text: "내 일주일을 공유하고, 시간을 예약받으세요" }),
+      el("h1", { text: "내 일주일을 공유하고,\n시간을 예약받으세요", style: "white-space:pre-line" }),
       el("p", {
         text:
-          "구글 로그인으로 월·화·수·목·금·토·일 시간 분배를 자세히 작성하세요. " +
-          "다른 사람은 원하는 시간 칸을 골라 마크를 남기고 예약할 수 있습니다.",
+          "월요일부터 일요일까지 내 시간 분배를 적어 두면, 링크를 받은 사람이 " +
+          "비어 있는 시간을 골라 예약을 신청합니다. 예약은 내가 승인해야 확정돼요.",
       }),
       currentUser
         ? el("a", { class: "btn btn-primary", href: "#/me" }, "내 시간표 작성하기")
@@ -285,12 +285,15 @@ async function renderHome(view) {
               el("div", { class: "card-sub", text: data.id === currentUser?.uid ? "내 시간표" : "시간표 보기" }),
             ]),
           ]),
-          el("div", { class: "card-meta" }, [el("span", { html: `채워진 시간 <b>${planCount}</b>칸` })]),
+          el("div", { class: "card-meta" }, [
+            el("span", { html: `일정 <b>${planCount}</b>칸` }),
+            el("span", { text: "시간표 열기 →" }),
+          ]),
         ])
       );
     });
     $("#homeCount").textContent = `${docs.length}명`;
-    if (docs.length === 0) cards.appendChild(el("div", { class: "empty", text: "아직 공개된 시간표가 없습니다. 첫 번째로 작성해 보세요!" }));
+    if (docs.length === 0) cards.appendChild(el("div", { class: "empty", text: "아직 공개된 시간표가 없어요. 첫 번째로 만들어 보세요 🙌" }));
   } catch (e) {
     console.error(e);
     cards.innerHTML = "";
@@ -317,7 +320,7 @@ function renderSchedule(view, uid) {
   const headBox = el("div");
   const hintBox = el("div");
   const gridWrap = el("div", { class: "grid-wrap" });
-  const statusBox = el("div", {}, [el("div", { class: "empty", text: "시간표를 불러오는 중…" })]);
+  const statusBox = el("div", {}, [el("div", { class: "empty", text: "시간표를 불러오는 중이에요…" })]);
   wrap.append(headBox, hintBox, gridWrap, statusBox);
 
   gridState = { uid, isOwner, scheduleData: {}, resByCell: {} };
@@ -383,8 +386,16 @@ function renderSchedule(view, uid) {
     hintBox.appendChild(
       el("div", { class: "mode-hint" }, [
         isOwner
-          ? "✏️ 칸을 클릭해 일정을 작성/수정하세요. 여러 칸은 드래그로 한 번에 작성할 수 있어요. 점선으로 표시된 칸은 ⏳ 승인 대기 중인 예약이며, 칸을 눌러 승인 또는 거절할 수 있습니다."
-          : "🖱️ 빈 칸을 클릭해 예약하세요. 로그인 없이 게스트로도 가능해요. 여러 시간은 드래그로 한 번에 예약할 수 있고, 한 칸당 한 명만 예약됩니다. 예약은 시간표 주인의 승인 후 확정됩니다.",
+          ? "✏️ 칸을 클릭해 일정을 작성하고, 여러 칸은 드래그로 한 번에 채우세요. 다른 사람의 예약 요청은 칸을 누르거나 위 ⏳ 버튼에서 승인·거절할 수 있어요."
+          : "🖱️ 원하는 칸을 클릭해 예약하세요. 로그인 없이 게스트로도 가능하고, 드래그하면 여러 시간을 한 번에 예약할 수 있어요. 예약은 한 칸에 한 명씩, 주인의 승인 후 확정됩니다.",
+      ])
+    );
+    hintBox.appendChild(
+      el("div", { class: "legend" }, [
+        el("span", {}, [el("i", { class: "plan" }), "일정 있음"]),
+        el("span", {}, [el("i", { class: "ok" }), "예약 확정"]),
+        el("span", {}, [el("i", { class: "wait" }), "승인 대기"]),
+        el("span", { class: "card-sub", text: "· 칸을 드래그하면 여러 시간을 한 번에 선택합니다" }),
       ])
     );
   }
